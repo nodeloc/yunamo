@@ -225,55 +225,58 @@
           </div>
 
           <!-- Custom nameservers card -->
-          <section v-if="isCustomMode" class="y-panel flex flex-col gap-4 p-5 sm:p-6">
-            <h2 class="text-lg font-semibold leading-[26px] text-y-text">{{ $t('app2.ns.customTitle') }}</h2>
-            <p class="text-sm text-y-muted">
-              {{ activeDomain.use_default_nameservers
-                ? $t('app2.ns.customDescDelegate', { site: siteName })
-                : $t('app2.ns.customDescActive') }}
-            </p>
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label v-for="(ns, index) in inlineNS" :key="index" class="y-field text-[13px] text-y-muted">
-                {{ $t('app2.ns.nameserver', { n: index + 1 }) }}
-                <span class="flex gap-2">
-                  <input
-                    v-model="inlineNS[index]"
-                    type="text"
-                    :placeholder="$t('uiDomains.nsPlaceholder', { n: index + 1 })"
-                    :aria-label="$t('app2.ns.nameserver', { n: index + 1 })"
-                    class="input input-bordered min-w-0 flex-1 font-mono text-sm"
-                    autocomplete="off"
-                    autocapitalize="off"
-                    spellcheck="false"
-                  />
-                  <button
-                    v-if="inlineNS.length > 1"
-                    type="button"
-                    class="btn btn-ghost btn-square shrink-0 text-y-danger-text"
-                    :title="$t('uiDomains.nsRemove')"
-                    :aria-label="$t('uiDomains.nsRemove')"
-                    @click="inlineNS.splice(index, 1)"
-                  >
-                    <X :size="16" :stroke-width="1.5" />
-                  </button>
-                </span>
-              </label>
-            </div>
-            <div class="flex flex-wrap items-center gap-2">
-              <button type="button" class="btn btn-primary" :disabled="nsSwitching" @click="saveInlineNS">
-                <span v-if="nsSwitching" class="loading loading-spinner loading-sm"></span>
-                {{ $t('app2.ns.save') }}
-              </button>
-              <button type="button" class="btn btn-ghost btn-sm gap-1.5" @click="inlineNS.push('')">
-                <Plus :size="16" :stroke-width="1.5" />
-                {{ $t('uiDomains.nsAdd') }}
-              </button>
-            </div>
-            <p v-if="!activeDomain.use_default_nameservers" class="text-xs text-y-faint">
-              {{ $t('app2.ns.defaultLabel', { site: siteName }) }}:
-              <span class="font-mono">ns1.nodelook.com</span>, <span class="font-mono">ns2.nodelook.com</span>
-            </p>
-          </section>
+          <template v-if="isCustomMode">
+            <section class="y-panel flex flex-col gap-4 p-5 sm:p-6">
+              <h2 class="text-lg font-semibold leading-[26px] text-y-text">{{ $t('app2.ns.customTitle') }}</h2>
+              <p class="text-sm text-y-muted">
+                {{ activeDomain.use_default_nameservers
+                  ? $t('app2.ns.customDescDelegate', { site: siteName })
+                  : $t('app2.ns.customDescActive') }}
+              </p>
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label v-for="(ns, index) in inlineNS" :key="index" class="y-field text-[13px] text-y-muted">
+                  {{ $t('app2.ns.nameserver', { n: index + 1 }) }}
+                  <span class="flex gap-2">
+                    <input
+                      v-model="inlineNS[index]"
+                      type="text"
+                      :placeholder="$t('uiDomains.nsPlaceholder', { n: index + 1 })"
+                      :aria-label="$t('app2.ns.nameserver', { n: index + 1 })"
+                      class="input input-bordered min-w-0 flex-1 font-mono text-sm"
+                      autocomplete="off"
+                      autocapitalize="off"
+                      spellcheck="false"
+                    />
+                    <button
+                      v-if="inlineNS.length > 1"
+                      type="button"
+                      class="btn btn-ghost btn-square shrink-0 text-y-danger-text"
+                      :title="$t('uiDomains.nsRemove')"
+                      :aria-label="$t('uiDomains.nsRemove')"
+                      @click="inlineNS.splice(index, 1)"
+                    >
+                      <X :size="16" :stroke-width="1.5" />
+                    </button>
+                  </span>
+                </label>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <button type="button" class="btn btn-primary" :disabled="nsSwitching" @click="saveInlineNS">
+                  <span v-if="nsSwitching" class="loading loading-spinner loading-sm"></span>
+                  {{ $t('app2.ns.save') }}
+                </button>
+                <button type="button" class="btn btn-ghost btn-sm gap-1.5" @click="inlineNS.push('')">
+                  <Plus :size="16" :stroke-width="1.5" />
+                  {{ $t('uiDomains.nsAdd') }}
+                </button>
+              </div>
+              <p v-if="!activeDomain.use_default_nameservers" class="text-xs text-y-faint">
+                {{ $t('app2.ns.defaultLabel', { site: siteName }) }}:
+                <span class="font-mono">ns1.nodelook.com</span>, <span class="font-mono">ns2.nodelook.com</span>
+              </p>
+            </section>
+            <DnssecCard v-if="!activeDomain.use_default_nameservers" :domain-id="activeDomain.id" custom-ns />
+          </template>
 
           <!-- Yunamo DNS: records + DNSSEC -->
           <template v-else>

@@ -975,6 +975,10 @@ func (h *PaymentHandler) updateDomainNSRecordsInPowerDNS(domain *models.Domain, 
 
 	// 默认 NS 使用独立 child zone；PowerDNS 不会自动创建父区委派。
 	if isDefault {
+		if err := dropForeignDS(h.pdns, rootDomain, subdomainFQDN); err != nil {
+			fmt.Printf("Warning: Failed to remove custom-NS DS records for %s: %v\n", subdomainFQDN, err)
+			return
+		}
 		defaultNS := ensureCanonicalNS([]string{h.cfg.DNS.DefaultNS1, h.cfg.DNS.DefaultNS2})
 		if err := h.pdns.EnsureDelegatedZone(subdomainFQDN, rootDomain, defaultNS); err != nil {
 			fmt.Printf("Warning: Failed to create delegated zone for %s in PowerDNS: %v\n", subdomainFQDN, err)
@@ -985,7 +989,7 @@ func (h *PaymentHandler) updateDomainNSRecordsInPowerDNS(domain *models.Domain, 
 	}
 
 	// 自定义 NS 不应继续保留本地 child zone 的 DS 或区域数据。
-	if err := h.pdns.UnpublishDSFromParentZone(subdomainFQDN, rootDomain); err != nil {
+	if err := dropLocalDS(h.pdns, rootDomain, subdomainFQDN); err != nil {
 		fmt.Printf("Warning: Failed to remove old DS records for %s: %v\n", subdomainFQDN, err)
 		return
 	}

@@ -8,7 +8,7 @@
         </span>
         <div class="min-w-0">
           <h2 class="y-h3">DNSSEC</h2>
-          <p class="mt-0.5 text-sm text-y-muted">{{ $t('uiUser.dns.dnssecDesc') }}</p>
+          <p class="mt-0.5 text-sm text-y-muted">{{ customNs ? $t('uiUser.dns.customDnssecDesc') : $t('uiUser.dns.dnssecDesc') }}</p>
         </div>
       </div>
       <div class="flex items-center gap-3">
@@ -17,6 +17,18 @@
           :label="dnssec.enabled ? $t('dnsManagement.dnssecEnabled') : $t('dnsManagement.dnssecDisabled')"
         />
         <button
+          v-if="customNs"
+          v-show="dnssec.enabled"
+          type="button"
+          class="btn btn-ghost btn-sm text-y-danger-text"
+          :disabled="dnssec.loading"
+          @click="removeCustomDS"
+        >
+          <span v-if="dnssec.loading" class="loading loading-spinner loading-xs"></span>
+          <span v-else>{{ $t('uiUser.dns.customDsRemove') }}</span>
+        </button>
+        <button
+          v-else
           type="button"
           class="btn btn-sm"
           :class="dnssec.enabled ? 'btn-ghost text-y-danger-text' : 'btn-outline'"
@@ -29,7 +41,48 @@
       </div>
     </div>
 
-    <div v-if="dnssec.enabled" class="space-y-4 px-5 py-5">
+    <!-- Custom nameservers: the owner supplies the DS of a zone signed elsewhere -->
+    <div v-if="customNs" class="space-y-4 px-5 py-5">
+      <div v-if="dnssec.enabled" class="flex flex-wrap gap-2">
+        <span :class="dnssec.parentSigned ? 'y-chip-mint' : 'y-chip-warn'">
+          {{ dnssec.parentSigned ? $t('dnsManagement.dnssecParentSigned', { zone: dnssec.parentZone }) : $t('uiUser.dns.parentUnsigned', { zone: dnssec.parentZone }) }}
+        </span>
+        <span :class="dnssec.chainValid ? 'y-chip-mint' : 'y-chip'">
+          {{ dnssec.chainValid ? $t('dnsManagement.dnssecChainValid') : $t('dnsManagement.dnssecChainIncomplete') }}
+        </span>
+      </div>
+
+      <div v-if="dnssec.dsRecords.length > 0" class="space-y-1.5">
+        <p class="y-label">{{ $t('uiUser.dns.dsRecords') }}</p>
+        <div v-for="ds in dnssec.dsRecords" :key="ds" class="flex items-start gap-2">
+          <code class="min-w-0 flex-1 break-all rounded-sm border border-y-line bg-y-surface px-3 py-2 text-xs text-y-text">{{ ds }}</code>
+          <button type="button" class="btn btn-ghost btn-sm btn-square shrink-0" :title="$t('uiUser.common.copy')" :aria-label="$t('uiUser.common.copy')" @click="copyText(ds)">
+            <Copy :size="16" :stroke-width="1.5" />
+          </button>
+        </div>
+      </div>
+
+      <div class="y-field">
+        <label :for="`custom-ds-${domainId}`" class="y-field-label">{{ $t('uiUser.dns.customDsLabel') }}</label>
+        <textarea
+          :id="`custom-ds-${domainId}`"
+          v-model="customDSInput"
+          rows="3"
+          spellcheck="false"
+          :placeholder="$t('uiUser.dns.customDsPlaceholder')"
+          class="textarea textarea-bordered w-full font-mono text-xs leading-5"
+          :aria-describedby="`custom-ds-hint-${domainId}`"
+        ></textarea>
+        <p :id="`custom-ds-hint-${domainId}`" class="y-field-hint">{{ $t('uiUser.dns.customDsHint') }}</p>
+      </div>
+      <button type="button" class="btn btn-outline btn-sm gap-1.5" :disabled="dnssec.publishingDS" @click="publishCustomDS">
+        <span v-if="dnssec.publishingDS" class="loading loading-spinner loading-xs"></span>
+        <Upload v-else :size="14" :stroke-width="1.5" />
+        {{ dnssec.enabled ? $t('uiUser.dns.customDsUpdate') : $t('uiUser.dns.customDsPublish') }}
+      </button>
+    </div>
+
+    <div v-else-if="dnssec.enabled" class="space-y-4 px-5 py-5">
       <!-- Chain of trust status -->
       <div class="flex flex-wrap gap-2">
         <span :class="dnssec.parentSigned ? 'y-chip-mint' : 'y-chip-warn'">
@@ -93,6 +146,7 @@ import StatusDot from '../ui/StatusDot.vue'
 
 const props = defineProps({
   domainId: { type: [Number, String], required: true },
+  customNs: { type: Boolean, default: false },
 })
 
 const { t } = useI18n()
@@ -105,6 +159,7 @@ const dnssec = ref({
   parentSigned: false,
   dsPublished: false,
   chainValid: false,
+  dsRecords: [],
   loading: false,
   publishingDS: false,
 })
@@ -116,7 +171,10 @@ const applyDNSSECStatus = (data) => {
   dnssec.value.parentSigned = !!data.parent_signed
   dnssec.value.dsPublished = !!data.ds_published
   dnssec.value.chainValid = !!data.chain_valid
+  dnssec.value.dsRecords = data.ds_records || []
 }
+
+const customDSInput = ref('')
 
 const fetchDNSSEC = async () => {
   const id = props.domainId
@@ -129,7 +187,14 @@ const fetchDNSSEC = async () => {
   }
 }
 
-watch(() => props.domainId, fetchDNSSEC, { immediate: true })
+watch(
+  () => [props.domainId, props.customNs],
+  () => {
+    customDSInput.value = ''
+    fetchDNSSEC()
+  },
+  { immediate: true },
+)
 
 const toggleDNSSEC = async () => {
   dnssec.value.loading = true
@@ -176,6 +241,42 @@ const publishDS = async () => {
     toast.error(error.response?.data?.error || t('dnsManagement.publishDSFailed'))
   } finally {
     dnssec.value.publishingDS = false
+  }
+}
+
+const publishCustomDS = async () => {
+  const records = customDSInput.value.split('\n').map((line) => line.trim()).filter(Boolean)
+  if (records.length === 0) {
+    toast.error(t('uiUser.dns.customDsEmpty'))
+    return
+  }
+  dnssec.value.publishingDS = true
+  try {
+    const response = await axios.post(`/api/domains/${props.domainId}/dnssec/publish-ds`, { ds_records: records })
+    applyDNSSECStatus(response.data)
+    customDSInput.value = ''
+    toast.success(response.data.message || t('dnsManagement.publishDSSuccess'))
+    if (response.data.warning) {
+      toast.warning(response.data.warning, 6000)
+    }
+  } catch (error) {
+    toast.error(error.response?.data?.error || t('dnsManagement.publishDSFailed'))
+  } finally {
+    dnssec.value.publishingDS = false
+  }
+}
+
+const removeCustomDS = async () => {
+  if (!confirm(t('uiUser.dns.customDsRemoveConfirm'))) return
+  dnssec.value.loading = true
+  try {
+    await axios.post(`/api/domains/${props.domainId}/dnssec/disable`)
+    await fetchDNSSEC()
+    toast.success(t('uiUser.dns.customDsRemoved'))
+  } catch (error) {
+    toast.error(error.response?.data?.error || t('dnsManagement.dnssecOperationFailed'))
+  } finally {
+    dnssec.value.loading = false
   }
 }
 </script>

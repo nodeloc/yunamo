@@ -603,7 +603,16 @@ func (c *Client) PublishDSToParentZone(childDomain, parentZone string) error {
 	if len(dsContents) == 0 {
 		return fmt.Errorf("no active DS records found for %s", childDomain)
 	}
+	return c.SetParentDS(parentZone, childDomain, dsContents)
+}
 
+// SetParentDS replaces the DS RRset of childDomain in the parent zone with the
+// given records and rectifies the parent. It is used directly for children
+// signed elsewhere (custom nameservers), whose DS the owner supplies.
+func (c *Client) SetParentDS(parentZone, childDomain string, dsContents []string) error {
+	if len(dsContents) == 0 {
+		return fmt.Errorf("no DS records to publish for %s", childDomain)
+	}
 	entries := make([]RecordEntry, len(dsContents))
 	for i, ds := range dsContents {
 		entries[i] = RecordEntry{Content: ds}

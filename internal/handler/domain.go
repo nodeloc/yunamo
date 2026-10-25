@@ -665,6 +665,27 @@ func (h *DomainHandler) domainDNSSECStatus(domain *models.Domain) gin.H {
 		}
 	}
 
+	// Custom nameservers sign the zone elsewhere; all we hold is the DS the
+	// owner asked us to publish at the delegation point.
+	if !domain.UseDefaultNameservers {
+		status["custom_ns"] = true
+		dsRecords := []string{}
+		if domain.RootDomain != nil {
+			if published, err := h.pdns.GetRRset(domain.RootDomain.Domain, domain.FullDomain, "DS"); err == nil {
+				for _, r := range published {
+					if !r.Disabled {
+						dsRecords = append(dsRecords, r.Content)
+					}
+				}
+			}
+		}
+		status["ds_records"] = dsRecords
+		status["enabled"] = len(dsRecords) > 0
+		status["ds_published"] = len(dsRecords) > 0
+		status["chain_valid"] = len(dsRecords) > 0 && status["parent_signed"] == true
+		return status
+	}
+
 	zone, err := h.pdns.GetZoneInfo(domain.FullDomain)
 	if err != nil || !zone.DNSsec {
 		return status
@@ -759,7 +780,7 @@ func (h *DomainHandler) EnableDomainDNSSEC(c *gin.Context) {
 		return
 	}
 	if !domain.UseDefaultNameservers {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "DNSSEC is managed by the custom nameserver provider"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "This domain uses custom nameservers: sign the zone at your DNS provider, then submit its DS records via POST /api/domains/:id/dnssec/publish-ds"})
 		return
 	}
 	if domain.Status != "active" {
@@ -833,9 +854,13 @@ func (h *DomainHandler) DisableDomainDNSSEC(c *gin.Context) {
 	})
 }
 
-// PublishDomainDSRecords 将子域名的 DS 记录（重新）发布到父 zone
+// PublishDomainDSRecords 将子域名的 DS 记录（重新）发布到父 zone。
+// 默认 NS：DS 取自本地签名的 child zone，无需请求体。
+// 自定义 NS：请求体 {"ds_records": ["<key tag> <algorithm> <digest type> <digest>", ...]}
+// 由域名所有者提供（来自其 DNS 服务商），整体替换父 zone 中的 DS。
 // @Summary 发布 DS 记录到父 zone
 // @Tags Domain
+// @Accept json
 // @Produce json
 // @Param id path int true "域名 ID"
 // @Success 200 {object} map[string]interface{}
@@ -852,7 +877,7 @@ func (h *DomainHandler) PublishDomainDSRecords(c *gin.Context) {
 		return
 	}
 	if !domain.UseDefaultNameservers {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "DNSSEC is managed by the custom nameserver provider"})
+		h.publishCustomDSRecords(c, domain)
 		return
 	}
 
@@ -869,6 +894,54 @@ func (h *DomainHandler) PublishDomainDSRecords(c *gin.Context) {
 
 	status := h.domainDNSSECStatus(domain)
 	status["message"] = fmt.Sprintf("DS records published to %s successfully", domain.RootDomain.Domain)
+	c.JSON(http.StatusOK, status)
+}
+
+// publishCustomDSRecords 发布自定义 NS 域名所有者提供的 DS 记录。
+// 子 zone 在第三方签名，这里只能在父 zone 的委派点写入 DS；
+// 写入错误的 DS 会使域名在验证型解析器上 SERVFAIL，这一后果由所有者承担并可随时撤销。
+func (h *DomainHandler) publishCustomDSRecords(c *gin.Context, domain *models.Domain) {
+	if domain.Status != "active" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "DS records can only be published for active domains"})
+		return
+	}
+
+	var req struct {
+		DSRecords []string `json:"ds_records"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Request body must be {\"ds_records\": [\"<key tag> <algorithm> <digest type> <digest>\"]}"})
+		return
+	}
+	dsRecords, err := normalizeDSRecords(domain.FullDomain, req.DSRecords)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// The DS only means something next to the NS delegation; re-assert it so a
+	// delegation lost earlier does not leave the DS orphaned.
+	var nameservers []string
+	_ = json.Unmarshal([]byte(domain.Nameservers), &nameservers)
+	normalizedNS, err := normalizeNameservers(nameservers)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The domain's custom nameservers are invalid: " + err.Error()})
+		return
+	}
+	if err := h.pdns.SetDelegation(domain.RootDomain.Domain, domain.FullDomain, ensureCanonicalNS(normalizedNS)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to publish the NS delegation: " + err.Error()})
+		return
+	}
+	if err := h.pdns.SetParentDS(domain.RootDomain.Domain, domain.FullDomain, dsRecords); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to publish DS records: " + err.Error()})
+		return
+	}
+
+	status := h.domainDNSSECStatus(domain)
+	status["message"] = fmt.Sprintf("DS records published to %s successfully", domain.RootDomain.Domain)
+	if status["parent_signed"] != true {
+		status["warning"] = fmt.Sprintf("Parent zone %s is not DNSSEC signed yet; the chain of trust will be incomplete until it is", domain.RootDomain.Domain)
+	}
 	c.JSON(http.StatusOK, status)
 }
 
@@ -1024,6 +1097,12 @@ func (h *DomainHandler) ModifyNameservers(c *gin.Context) {
 	defaultNS := []string{h.cfg.DNS.DefaultNS1, h.cfg.DNS.DefaultNS2}
 	isDefault := sameNameservers(req.Nameservers, defaultNS)
 
+	// A DS submitted for the previous custom nameservers describes keys the
+	// new ones do not hold; it must go before the delegation changes.
+	var previousNS []string
+	_ = json.Unmarshal([]byte(domain.Nameservers), &previousNS)
+	dropCustomDS := !domain.UseDefaultNameservers && !isDefault && !sameNameservers(previousNS, req.Nameservers)
+
 	if err := h.db.Model(&domain).Updates(map[string]interface{}{
 		"nameservers":             string(nameserversJSON),
 		"use_default_nameservers": isDefault,
@@ -1034,7 +1113,15 @@ func (h *DomainHandler) ModifyNameservers(c *gin.Context) {
 
 	// 在 PowerDNS 中更新 NS 记录
 	if domain.RootDomain != nil {
-		go h.updateDomainNSRecordsInPowerDNS(&domain, req.Nameservers, isDefault)
+		go func() {
+			if dropCustomDS {
+				if err := h.pdns.UnpublishDSFromParentZone(domain.FullDomain, domain.RootDomain.Domain); err != nil {
+					fmt.Printf("Warning: Failed to remove custom-NS DS records for %s: %v\n", domain.FullDomain, err)
+					return
+				}
+			}
+			h.updateDomainNSRecordsInPowerDNS(&domain, req.Nameservers, isDefault)
+		}()
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -2177,6 +2264,25 @@ func (h *DomainHandler) runDelegationRepair(rootDomain models.RootDomain, domain
 		signed[strings.ToLower(strings.TrimSuffix(z.Name, "."))] = z.DNSsec
 	}
 
+	// DS records of custom-NS domains were submitted by their owners and exist
+	// only in the parent zone; carry them over instead of deleting them.
+	parent, err := h.pdns.GetZone(rootDomain.Domain)
+	if err != nil {
+		addError("failed to read parent zone %s: %v", rootDomain.Domain, err)
+		finish()
+		return
+	}
+	parentDS := map[string][]string{}
+	for _, rrset := range parent.RRsets {
+		if rrset.Type != "DS" {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSuffix(rrset.Name, "."))
+		for _, r := range rrset.Records {
+			parentDS[name] = append(parentDS[name], r.Content)
+		}
+	}
+
 	defaultNS := ensureCanonicalNS([]string{h.cfg.DNS.DefaultNS1, h.cfg.DNS.DefaultNS2})
 	var delegations []powerdns.Delegation
 	for _, d := range domains {
@@ -2191,7 +2297,12 @@ func (h *DomainHandler) runDelegationRepair(rootDomain models.RootDomain, domain
 				addError("%s: invalid custom nameservers %v (%v); skipped", d.FullDomain, ns, err)
 				continue
 			}
-			delegations = append(delegations, powerdns.Delegation{Child: d.FullDomain, Nameservers: ensureCanonicalNS(normalized)})
+			del := powerdns.Delegation{Child: d.FullDomain, Nameservers: ensureCanonicalNS(normalized)}
+			// A leftover local zone means the DS may be ours and stale; drop it.
+			if _, leftover := signed[name]; !leftover {
+				del.DS = parentDS[name]
+			}
+			delegations = append(delegations, del)
 			continue
 		}
 
@@ -2656,6 +2767,10 @@ func (h *DomainHandler) updateDomainNSRecordsInPowerDNS(domain *models.Domain, n
 
 	// 默认 NS：先确保 child zone 可提供权威应答，再发布父区委派。
 	if isDefault {
+		if err := dropForeignDS(h.pdns, rootDomain, subdomainFQDN); err != nil {
+			fmt.Printf("Warning: Failed to remove custom-NS DS records for %s: %v\n", subdomainFQDN, err)
+			return
+		}
 		defaultNS := ensureCanonicalNS([]string{h.cfg.DNS.DefaultNS1, h.cfg.DNS.DefaultNS2})
 		if err := h.pdns.EnsureDelegatedZone(subdomainFQDN, rootDomain, defaultNS); err != nil {
 			fmt.Printf("Warning: Failed to create delegated zone for %s in PowerDNS: %v\n", subdomainFQDN, err)
@@ -2667,7 +2782,7 @@ func (h *DomainHandler) updateDomainNSRecordsInPowerDNS(domain *models.Domain, n
 
 	// 使用自定义 NS
 	// 1. 先移除本地 child zone 的旧 DS，避免自定义服务被旧信任链标记为 BOGUS。
-	if err := h.pdns.UnpublishDSFromParentZone(subdomainFQDN, rootDomain); err != nil {
+	if err := dropLocalDS(h.pdns, rootDomain, subdomainFQDN); err != nil {
 		fmt.Printf("Warning: Failed to remove old DS records for %s: %v\n", subdomainFQDN, err)
 		return
 	}

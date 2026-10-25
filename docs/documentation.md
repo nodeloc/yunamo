@@ -222,7 +222,7 @@ Authorization: Bearer <token>
 | GET | `/api/domains/:id/dnssec` | Get DNSSEC info |
 | POST | `/api/domains/:id/dnssec/enable` | Enable DNSSEC |
 | POST | `/api/domains/:id/dnssec/disable` | Disable DNSSEC |
-| POST | `/api/domains/:id/dnssec/publish-ds` | Publish DS records |
+| POST | `/api/domains/:id/dnssec/publish-ds` | Publish DS records to the parent zone. Yunamo nameservers: no body (DS comes from the signed zone). Custom nameservers: `{"ds_records": ["<key tag> <algorithm> <digest type> <digest>"]}`, which replaces the published DS set; algorithms 8/10/13/14/15/16, digest type 2 or 4 |
 | GET | `/api/domain-scans/:id` | Get scan records for a domain |
 
 ## DNS Record Endpoints (JWT Required)
@@ -304,7 +304,7 @@ Click the `suspended` badge on the domain card to view the reason. Contact the a
 When a domain remains in a failed state beyond the configured grace period, a countdown appears on the domain card. Renew the domain or fix the underlying issue before the timer expires.
 
 **Q: How do I enable DNSSEC?**
-Open the domain detail page, navigate to the DNSSEC section, and click Enable. The system generates a signing key for your zone and publishes the DS record into the parent (root domain) zone automatically. The DNSSEC panel shows whether the parent zone is signed and whether the DS is in place; the chain of trust is only complete when both are true. Domains that use custom nameservers must configure DNSSEC at their nameserver provider instead.
+Open the domain detail page, navigate to the DNSSEC section, and click Enable. The system generates a signing key for your zone and publishes the DS record into the parent (root domain) zone automatically. The DNSSEC panel shows whether the parent zone is signed and whether the DS is in place; the chain of trust is only complete when both are true. Domains that use custom nameservers are signed at their nameserver provider: enable DNSSEC there, then paste the DS record(s) the provider shows (for example `4515 13 2 6F67…`) into the DNSSEC panel on the domain page and click Publish. A DS that does not match the provider's keys makes the domain fail on validating resolvers, so copy it exactly; Remove DS takes it out of the parent zone again. Changing to different custom nameservers removes the published DS, since it belongs to the old provider's keys.
 
 **Q: What happens to DNS when a domain is suspended?**
 A suspended domain stops resolving: every record in its zone is disabled (the zone answers NODATA), legacy records in the parent zone are disabled, and for custom-nameserver domains the NS delegation in the parent is disabled (NXDOMAIN). Nothing is deleted, so reactivation restores the previous records. Health scans of suspended domains connect directly to the address stored in the domain's records (or answered by its custom nameservers), so a domain that has been fixed is still detected and restored automatically.
