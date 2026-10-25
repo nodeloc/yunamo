@@ -227,6 +227,18 @@ func (h *OAuthHandler) GoogleCallback(c *gin.Context) {
 	c.Redirect(http.StatusFound, fmt.Sprintf("%s/auth/callback?token=%s", h.cfg.FrontendURL, jwtToken))
 }
 
+// syncNodelocLevel 同步 NodeLoc 等级。配额只按新旧等级基础配额的差值调整，
+// 直接覆盖为等级配额会清掉优惠券、邀请等奖励的额度
+func (h *OAuthHandler) syncNodelocLevel(user *models.User, userLevel string, quota int, updates map[string]interface{}) {
+	updates["user_level"] = userLevel
+	if user.UserLevel == userLevel {
+		return
+	}
+	if delta := quota - GetQuotaForLevel(h.db, user.UserLevel); delta != 0 {
+		updates["domain_quota"] = gorm.Expr("domain_quota + ?", delta)
+	}
+}
+
 // findOrCreateOAuthUser 查找或创建 OAuth 用户
 func (h *OAuthHandler) findOrCreateOAuthUser(provider, oauthID, email, username, avatar, clientIP, userLevel string, quota int) (*models.User, error) {
 	var user models.User
@@ -241,8 +253,7 @@ func (h *OAuthHandler) findOrCreateOAuthUser(provider, oauthID, email, username,
 		}
 		// NodeLoc 用户再次登录时更新等级和配额
 		if provider == "nodeloc" {
-			updates["user_level"] = userLevel
-			updates["domain_quota"] = quota
+			h.syncNodelocLevel(&user, userLevel, quota, updates)
 		}
 		h.db.Model(&user).Updates(updates)
 		return &user, nil
@@ -259,8 +270,7 @@ func (h *OAuthHandler) findOrCreateOAuthUser(provider, oauthID, email, username,
 			"last_login_ip": clientIP,
 		}
 		if provider == "nodeloc" {
-			updates["user_level"] = userLevel
-			updates["domain_quota"] = quota
+			h.syncNodelocLevel(&user, userLevel, quota, updates)
 		}
 		h.db.Model(&user).Updates(updates)
 		if avatar != "" && user.Avatar == nil {

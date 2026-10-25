@@ -265,35 +265,21 @@ func (h *CouponHandler) ApplyCoupon(c *gin.Context) {
 		}
 	}
 
-	// 获取用户信息
-	var user models.User
-	if err := h.db.First(&user, userID).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user"})
-		return
-	}
-
-	// 应用优惠券效果
-	benefitApplied := ""
-	switch coupon.DiscountType {
-	case "quota_increase":
-		user.DomainQuota += coupon.QuotaIncrease
-		benefitApplied = fmt.Sprintf("Domain quota increased by %d", coupon.QuotaIncrease)
-		// percentage 和 fixed 在注册域名时应用
-	}
+	benefitApplied := fmt.Sprintf("Domain quota increased by %d", coupon.QuotaIncrease)
 
 	// 开始事务
 	tx := h.db.Begin()
 
-	// 保存用户更新
-	if err := tx.Save(&user).Error; err != nil {
+	// 原子增加配额，避免整行保存覆盖并发写入
+	if err := tx.Model(&models.User{}).Where("id = ?", userID).
+		UpdateColumn("domain_quota", gorm.Expr("domain_quota + ?", coupon.QuotaIncrease)).Error; err != nil {
 		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply coupon"})
 		return
 	}
 
 	// 增加使用次数
-	coupon.UsedCount++
-	if err := tx.Save(&coupon).Error; err != nil {
+	if err := tx.Model(&coupon).UpdateColumn("used_count", gorm.Expr("used_count + ?", 1)).Error; err != nil {
 		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update coupon"})
 		return
@@ -309,6 +295,13 @@ func (h *CouponHandler) ApplyCoupon(c *gin.Context) {
 	if err := tx.Create(usage).Error; err != nil {
 		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record usage"})
+		return
+	}
+
+	var user models.User
+	if err := tx.Select("domain_quota").First(&user, userID).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user"})
 		return
 	}
 
