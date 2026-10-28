@@ -24,8 +24,8 @@
       <p v-if="records.length === 0" class="px-6 py-10 text-center text-sm text-y-faint">{{ $t('app2.records.empty') }}</p>
 
       <template v-else>
-        <!-- Table, md and up -->
-        <div class="hidden overflow-x-auto md:block">
+        <!-- Table, xl and up (below that the sidebar leaves too little room) -->
+        <div class="hidden overflow-x-auto xl:block">
           <table class="y-table whitespace-nowrap">
             <thead>
               <tr>
@@ -39,8 +39,19 @@
             <tbody>
               <tr v-for="record in records" :key="record.id">
                 <td class="!py-2.5 !pl-6"><span :class="tagClass">{{ record.type }}</span></td>
-                <td class="font-mono text-[14px]" :class="{ 'text-y-faint': !record.is_active }">{{ record.name }}</td>
-                <td class="max-w-[22rem] font-mono text-[14px] text-y-muted">
+                <td>
+                  <div class="flex items-center gap-2">
+                    <span
+                      class="block max-w-[16rem] truncate font-mono text-[14px]"
+                      :class="{ 'text-y-faint': !record.is_active }"
+                      :title="record.name"
+                    >{{ record.name }}</span>
+                    <span v-if="!record.is_active" class="y-chip shrink-0 !py-0 text-[11px]">{{ $t('dnsManagement.inactive') }}</span>
+                    <span v-if="!record.synced_to_powerdns" class="y-chip-warn shrink-0 !py-0 text-[11px]">{{ $t('app2.records.pending') }}</span>
+                  </div>
+                </td>
+                <!-- max-w-0 + w-full: the value column takes whatever width is left and truncates, so the actions never get pushed off-screen -->
+                <td class="w-full max-w-0 font-mono text-[14px] text-y-muted">
                   <span class="block truncate" :title="record.content">
                     <span v-if="record.priority != null && hasPriority(record.type)" class="me-1 text-y-faint">{{ record.priority }}</span>{{ record.content }}
                   </span>
@@ -48,8 +59,6 @@
                 <td class="text-y-faint">{{ formatTtl(record.ttl) }}</td>
                 <td class="!py-1 !pr-4">
                   <div class="flex items-center justify-end gap-1">
-                    <span v-if="!record.is_active" class="y-chip !py-0 text-[11px]">{{ $t('dnsManagement.inactive') }}</span>
-                    <span v-if="!record.synced_to_powerdns" class="y-chip-warn !py-0 text-[11px]">{{ $t('app2.records.pending') }}</span>
                     <button
                       v-if="record.sync_error"
                       type="button"
@@ -85,8 +94,8 @@
           </table>
         </div>
 
-        <!-- Stacked rows, mobile -->
-        <ul class="divide-y divide-y-line md:hidden">
+        <!-- Stacked rows, below xl -->
+        <ul class="divide-y divide-y-line xl:hidden">
           <li v-for="record in records" :key="record.id" class="space-y-2 px-5 py-3.5">
             <div class="flex items-center justify-between gap-3">
               <div class="flex min-w-0 items-center gap-2.5">
