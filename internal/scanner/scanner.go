@@ -3,7 +3,6 @@ package scanner
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -507,20 +506,8 @@ func (s *Scanner) checkHTTP(domain string) *models.DomainScan {
 	return s.checkHTTPAt(domain, "")
 }
 
-// dialerTo returns a DialContext that ignores the requested host and connects
-// to ip instead (keeping the port), so Host/SNI stay the domain name.
-func dialerTo(ip string) func(ctx context.Context, network, addr string) (net.Conn, error) {
-	return func(ctx context.Context, network, addr string) (net.Conn, error) {
-		_, port, err := net.SplitHostPort(addr)
-		if err != nil {
-			return nil, err
-		}
-		d := net.Dialer{Timeout: 10 * time.Second}
-		return d.DialContext(ctx, network, net.JoinHostPort(ip, port))
-	}
-}
-
 // checkHTTPAt 检查 HTTP 状态；dialIP 非空时直接连接该 IP（用于挂起中的域名）
+// 连接统一走 guardedDialContext，避免被用户控制的记录指向内网/回环地址造成 SSRF。
 func (s *Scanner) checkHTTPAt(domain, dialIP string) *models.DomainScan {
 	scan := &models.DomainScan{
 		ScanType: "http",
@@ -531,9 +518,7 @@ func (s *Scanner) checkHTTPAt(domain, dialIP string) *models.DomainScan {
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-	}
-	if dialIP != "" {
-		client.Transport = &http.Transport{DialContext: dialerTo(dialIP)}
+		Transport: &http.Transport{DialContext: guardedDialContext(dialIP, 10*time.Second)},
 	}
 
 	start := timeutil.Now()
@@ -559,21 +544,14 @@ func (s *Scanner) checkSSL(domain string) *models.DomainScan {
 	return s.checkSSLAt(domain, "")
 }
 
-// checkSSLAt 检查 SSL 证书；dialIP 非空时直接连接该 IP，SNI 仍使用域名
+// checkSSLAt 检查 SSL 证书；dialIP 非空时直接连接该 IP，SNI 仍使用域名。
+// 目标地址经 SSRF 过滤，避免探测内网/回环地址。
 func (s *Scanner) checkSSLAt(domain, dialIP string) *models.DomainScan {
 	scan := &models.DomainScan{
 		ScanType: "ssl",
 	}
 
-	target := domain + ":443"
-	if dialIP != "" {
-		target = net.JoinHostPort(dialIP, "443")
-	}
-	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", target, &tls.Config{
-		InsecureSkipVerify: true,
-		ServerName:         domain,
-	})
-
+	conn, err := dialTLSGuarded(domain, dialIP)
 	if err != nil {
 		scan.Status = "failed"
 		scan.ErrorMessage = err.Error()
