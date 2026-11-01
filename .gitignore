@@ -5,6 +5,10 @@
 
 # 编译输出
 opendomain
+# 根目录下 `go build ./cmd/api` / `go build main.go` 产生的二进制
+/api
+/main
+/bin/
 *.exe
 *.exe~
 *.dll
