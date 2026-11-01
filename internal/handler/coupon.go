@@ -251,8 +251,9 @@ func (h *CouponHandler) ApplyCoupon(c *gin.Context) {
 		return
 	}
 
-	// 如果优惠券不可重复使用，检查用户是否已使用过
-	if !coupon.IsReusable {
+	// 额度券（quota_increase）每人只能使用一次：即使管理员误勾选“可重复使用”，
+	// 也绝不允许同一用户反复叠加额度，否则可无限突破域名上限。
+	if !coupon.IsReusable || coupon.DiscountType == "quota_increase" {
 		var existingUsage models.CouponUsage
 		if err := h.db.Where("coupon_id = ? AND user_id = ?", coupon.ID, userID).First(&existingUsage).Error; err == nil {
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -270,18 +271,30 @@ func (h *CouponHandler) ApplyCoupon(c *gin.Context) {
 	// 开始事务
 	tx := h.db.Begin()
 
+	// 原子占用一次使用额度：条件更新可防止并发请求把 used_count 推过 MaxUses
+	res := tx.Model(&models.Coupon{}).
+		Where("id = ? AND (max_uses = 0 OR used_count < max_uses)", coupon.ID).
+		UpdateColumn("used_count", gorm.Expr("used_count + ?", 1))
+	if res.Error != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update coupon"})
+		return
+	}
+	if res.RowsAffected == 0 {
+		tx.Rollback()
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":      "Coupon has reached maximum uses",
+			"used_count": coupon.UsedCount,
+			"max_uses":   coupon.MaxUses,
+		})
+		return
+	}
+
 	// 原子增加配额，避免整行保存覆盖并发写入
 	if err := tx.Model(&models.User{}).Where("id = ?", userID).
 		UpdateColumn("domain_quota", gorm.Expr("domain_quota + ?", coupon.QuotaIncrease)).Error; err != nil {
 		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply coupon"})
-		return
-	}
-
-	// 增加使用次数
-	if err := tx.Model(&coupon).UpdateColumn("used_count", gorm.Expr("used_count + ?", 1)).Error; err != nil {
-		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update coupon"})
 		return
 	}
 

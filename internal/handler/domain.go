@@ -34,6 +34,12 @@ type DomainHandler struct {
 	cpHandler *CyberPanelHandler
 }
 
+// errQuotaExceeded 表示注册会超出用户域名配额（需要购买或使用额度券）。
+var errQuotaExceeded = errors.New("domain quota exceeded")
+
+// errCouponExhausted 表示优惠券已被用尽（并发下条件更新失败）。
+var errCouponExhausted = errors.New("coupon usage limit reached")
+
 func NewDomainHandler(db *gorm.DB, cfg *config.Config) *DomainHandler {
 	return &DomainHandler{
 		db:   db,
@@ -362,6 +368,20 @@ func (h *DomainHandler) RegisterDomain(c *gin.Context) {
 			return
 		}
 
+		// 优惠券带来的额度必须足以覆盖“已用 + 本次新增”，否则拒绝
+		// （旧逻辑只判断“已用 >= 配额”，当用户持有域名数已超过配额时，
+		//   任意 +1 的券都会让判断永久为真，从而可以无限领域名）
+		effectiveQuota := user.DomainQuota + coupon.QuotaIncrease
+		if int(userDomainCount)+1 > effectiveQuota {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":          "This coupon does not add enough quota for another domain.",
+				"quota_exceeded": true,
+				"quota":          effectiveQuota,
+				"used":           userDomainCount,
+			})
+			return
+		}
+
 		usedCoupon = &coupon
 	}
 
@@ -369,6 +389,37 @@ func (h *DomainHandler) RegisterDomain(c *gin.Context) {
 	err := h.db.Transaction(func(tx *gorm.DB) error {
 		now := timeutil.Now()
 		var domain *models.Domain
+
+		// 在事务内锁定用户行并重新校验配额，避免并发请求同时通过上面的预检
+		// 而超额注册（quota 只在这里被权威地判定一次）。
+		var txUser models.User
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&txUser, userID).Error; err != nil {
+			return err
+		}
+		var activeCount int64
+		if err := tx.Model(&models.Domain{}).
+			Where("user_id = ? AND status = ?", userID, "active").
+			Count(&activeCount).Error; err != nil {
+			return err
+		}
+		if usedCoupon == nil {
+			if int(activeCount) >= txUser.DomainQuota {
+				return errQuotaExceeded
+			}
+		} else {
+			// 重新加载优惠券并在锁内复核（使用次数 / 每人一次 / 有效期）
+			var freshCoupon models.Coupon
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&freshCoupon, usedCoupon.ID).Error; err != nil {
+				return err
+			}
+			if err := validateCouponTx(tx, &freshCoupon, userID, now); err != nil {
+				return err
+			}
+			if int(activeCount)+1 > txUser.DomainQuota+freshCoupon.QuotaIncrease {
+				return errQuotaExceeded
+			}
+			usedCoupon = &freshCoupon
+		}
 
 		if hasSoftDeleted {
 			// 恢复软删除记录并重新分配给当前用户
@@ -424,16 +475,20 @@ func (h *DomainHandler) RegisterDomain(c *gin.Context) {
 				return err
 			}
 
-			// 更新优惠券使用次数
-			if err := tx.Model(&models.Coupon{}).
-				Where("id = ?", usedCoupon.ID).
-				UpdateColumn("used_count", gorm.Expr("used_count + ?", 1)).Error; err != nil {
-				return err
+			// 更新优惠券使用次数（条件更新，防止并发下超过 MaxUses）
+			res := tx.Model(&models.Coupon{}).
+				Where("id = ? AND (max_uses = 0 OR used_count < max_uses)", usedCoupon.ID).
+				UpdateColumn("used_count", gorm.Expr("used_count + ?", 1))
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected == 0 {
+				return errCouponExhausted
 			}
 
 			// 如果是 quota_increase 类型，更新用户配额
 			if usedCoupon.DiscountType == "quota_increase" && usedCoupon.QuotaIncrease > 0 {
-				if err := tx.Model(&user).
+				if err := tx.Model(&models.User{}).Where("id = ?", userID).
 					UpdateColumn("domain_quota", gorm.Expr("domain_quota + ?", usedCoupon.QuotaIncrease)).Error; err != nil {
 					return err
 				}
@@ -451,9 +506,17 @@ func (h *DomainHandler) RegisterDomain(c *gin.Context) {
 	})
 
 	if err != nil {
-		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique constraint") {
+		switch {
+		case errors.Is(err, errQuotaExceeded):
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":          "Domain quota exceeded. Please use a coupon or purchase a domain.",
+				"quota_exceeded": true,
+			})
+		case errors.Is(err, errCouponExhausted):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "coupon usage limit reached"})
+		case strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique constraint"):
 			c.JSON(http.StatusConflict, gin.H{"error": "Domain already registered"})
-		} else {
+		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to register domain"})
 		}
 		return
@@ -514,6 +577,31 @@ func (h *DomainHandler) validateCouponForFreeRegistration(coupon *models.Coupon,
 		return fmt.Errorf("you have already used this coupon")
 	}
 
+	return nil
+}
+
+// validateCouponTx 在注册事务内复核优惠券，使用 tx 读取以便与后续写入同属一个
+// 事务。额度券（quota_increase）每人只能使用一次，无论 IsReusable 如何设置，
+// 否则单个用户可无限叠加额度从而突破域名上限。
+func validateCouponTx(tx *gorm.DB, coupon *models.Coupon, userID uint, now time.Time) error {
+	if !coupon.IsActive {
+		return fmt.Errorf("coupon is not active")
+	}
+	if now.Before(coupon.ValidFrom) {
+		return fmt.Errorf("coupon not yet valid")
+	}
+	if coupon.ValidUntil != nil && now.After(*coupon.ValidUntil) {
+		return fmt.Errorf("coupon has expired")
+	}
+	if coupon.MaxUses > 0 && coupon.UsedCount >= coupon.MaxUses {
+		return fmt.Errorf("coupon usage limit reached")
+	}
+	// 额度券每人仅限一次（不因 IsReusable 而放开）。
+	var usage models.CouponUsage
+	if err := tx.Where("coupon_id = ? AND user_id = ?", coupon.ID, userID).
+		First(&usage).Error; err == nil {
+		return fmt.Errorf("you have already used this coupon")
+	}
 	return nil
 }
 
