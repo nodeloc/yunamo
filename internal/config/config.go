@@ -2,7 +2,9 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -124,10 +126,10 @@ func Load() (*Config, error) {
 	viper.SetConfigFile(".env")
 	viper.SetConfigType("env")
 
-	// 尝试读取配置文件
+	// 尝试读取配置文件；文件不存在不是错误（纯环境变量部署也是合法的）
 	if err := viper.ReadInConfig(); err != nil {
-		// 配置文件不存在时，只使用环境变量
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+		var notFound viper.ConfigFileNotFoundError
+		if !errors.As(err, &notFound) && !os.IsNotExist(err) {
 			return nil, fmt.Errorf("error reading config file: %w", err)
 		}
 	}
