@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,6 +19,7 @@ import (
 	"opendomain/internal/middleware"
 	"opendomain/internal/models"
 	"opendomain/internal/services"
+	"opendomain/pkg/logger"
 	"opendomain/pkg/timeutil"
 )
 
@@ -25,6 +28,35 @@ type UserHandler struct {
 	rdb    *redis.Client
 	cfg    *config.Config
 	mailer *services.Mailer
+}
+
+// Login throttling: cap failed attempts per IP and per account within a window.
+const (
+	loginRateWindow    = 15 * time.Minute
+	loginMaxPerIP      = 20
+	loginMaxPerAccount = 10
+)
+
+// allowLogin attempts fails open when Redis is unavailable (a total login
+// outage would be worse than briefly losing the throttle), matching the
+// behavior of the other rate limiters in this package.
+func (h *UserHandler) allowLogin(ctx context.Context, ip, email string) bool {
+	if h.rdb == nil {
+		return true
+	}
+	rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	perIP, err := incrRateWindow(rctx, h.rdb, "login:rate:ip:"+ip, loginRateWindow)
+	if err != nil {
+		logger.Warnf("login rate limit: redis unavailable, allowing request: %v", err)
+		return true
+	}
+	perAccount, err := incrRateWindow(rctx, h.rdb, "login:rate:acct:"+hashEmailToken(strings.ToLower(email)), loginRateWindow)
+	if err != nil {
+		logger.Warnf("login rate limit: redis unavailable, allowing request: %v", err)
+		return true
+	}
+	return perIP <= loginMaxPerIP && perAccount <= loginMaxPerAccount
 }
 
 func NewUserHandler(db *gorm.DB, rdb *redis.Client, cfg *config.Config, mailer *services.Mailer) *UserHandler {
@@ -167,6 +199,16 @@ func (h *UserHandler) Login(c *gin.Context) {
 	var req models.UserLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": middleware.T(c, "error.validation")})
+		return
+	}
+
+	// 登录频率限制（按 IP + 账号），防止暴力破解/撞库
+	if !h.allowLogin(c.Request.Context(), reporterIP(c), req.Email) {
+		c.Header("Retry-After", strconv.Itoa(int(loginRateWindow.Seconds())))
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error": middleware.T(c, "auth.login_rate_limited"),
+			"code":  "rate_limited",
+		})
 		return
 	}
 
