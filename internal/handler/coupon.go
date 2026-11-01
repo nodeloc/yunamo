@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"opendomain/internal/config"
 	"opendomain/internal/middleware"
@@ -251,11 +252,26 @@ func (h *CouponHandler) ApplyCoupon(c *gin.Context) {
 		return
 	}
 
+	benefitApplied := fmt.Sprintf("Domain quota increased by %d", coupon.QuotaIncrease)
+
+	// 开始事务
+	tx := h.db.Begin()
+
+	// 先锁用户行，让同一用户的兑换串行执行；顺序（用户 → 优惠券）与注册域名一致，
+	// 否则并发时“是否已使用”的检查会同时通过，或者与注册事务互相死锁。
+	var lockedUser models.User
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&lockedUser, userID).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user"})
+		return
+	}
+
 	// 额度券（quota_increase）每人只能使用一次：即使管理员误勾选“可重复使用”，
 	// 也绝不允许同一用户反复叠加额度，否则可无限突破域名上限。
 	if !coupon.IsReusable || coupon.DiscountType == "quota_increase" {
 		var existingUsage models.CouponUsage
-		if err := h.db.Where("coupon_id = ? AND user_id = ?", coupon.ID, userID).First(&existingUsage).Error; err == nil {
+		if err := tx.Where("coupon_id = ? AND user_id = ?", coupon.ID, userID).First(&existingUsage).Error; err == nil {
+			tx.Rollback()
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error":       "You have already used this coupon",
 				"is_reusable": coupon.IsReusable,
@@ -265,11 +281,6 @@ func (h *CouponHandler) ApplyCoupon(c *gin.Context) {
 			return
 		}
 	}
-
-	benefitApplied := fmt.Sprintf("Domain quota increased by %d", coupon.QuotaIncrease)
-
-	// 开始事务
-	tx := h.db.Begin()
 
 	// 原子占用一次使用额度：条件更新可防止并发请求把 used_count 推过 MaxUses
 	res := tx.Model(&models.Coupon{}).

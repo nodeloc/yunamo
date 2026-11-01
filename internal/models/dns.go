@@ -43,7 +43,7 @@ type DNSRecordCreateRequest struct {
 // DNSRecordUpdateRequest 更新 DNS 记录请求
 type DNSRecordUpdateRequest struct {
 	Name     *string `json:"name,omitempty"`
-	Type     *string `json:"type,omitempty"`
+	Type     *string `json:"type,omitempty" binding:"omitempty,oneof=A AAAA CNAME ALIAS MX TXT NS SRV CAA"`
 	Content  *string `json:"content,omitempty"`
 	TTL      *int    `json:"ttl,omitempty"`
 	Priority *int    `json:"priority,omitempty"`
