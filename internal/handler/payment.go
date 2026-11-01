@@ -591,14 +591,6 @@ func (h *PaymentHandler) initiateNodelocPayment(payment *models.Payment, order *
 	// 生成签名（使用原始未编码的值）
 	signature := h.generateSignature(params)
 
-	// 调试日志
-	fmt.Printf("[DEBUG] Payment initiation:\n")
-	fmt.Printf("  Amount: %s\n", params["amount"])
-	fmt.Printf("  Description: %s\n", params["description"])
-	fmt.Printf("  Order ID: %s\n", params["order_id"])
-	fmt.Printf("  Signature: %s\n", signature)
-	fmt.Printf("  Payment ID: %s\n", h.cfg.Payment.NodelocPaymentID)
-
 	// 构建请求 URL
 	apiURL := fmt.Sprintf("https://www.nodeloc.com/payment/pay/%s/process", h.cfg.Payment.NodelocPaymentID)
 	if h.cfg.Payment.IsTestMode {
@@ -611,8 +603,6 @@ func (h *PaymentHandler) initiateNodelocPayment(payment *models.Payment, order *
 	formData["description"] = []string{params["description"]}
 	formData["order_id"] = []string{params["order_id"]}
 	formData["signature"] = []string{signature}
-
-	fmt.Printf("  Form data: %v\n", formData)
 
 	// 发起 POST 请求（使用表单编码）
 	resp, err := http.PostForm(apiURL, formData)
@@ -627,10 +617,8 @@ func (h *PaymentHandler) initiateNodelocPayment(payment *models.Payment, order *
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// 记录完整响应用于调试
-	fmt.Printf("[DEBUG] NodeLoc API Response:\n")
-	fmt.Printf("  Status Code: %d\n", resp.StatusCode)
-	fmt.Printf("  Response Body: %s\n", string(body))
+	// 记录响应状态（不打印响应体，避免泄露敏感信息）
+	fmt.Printf("[INFO] NodeLoc payment initiation for order %s returned HTTP %d\n", order.OrderNumber, resp.StatusCode)
 
 	// 检查状态码
 	if resp.StatusCode != http.StatusOK {
@@ -688,26 +676,17 @@ func (h *PaymentHandler) generateSignature(params map[string]string) string {
 	}
 	message := strings.Join(parts, "&")
 
-	// 调试日志
-	fmt.Printf("[DEBUG] Signature generation:\n")
-	fmt.Printf("  Message string: %s\n", message)
-
 	// 修剪密钥以去除可能的空白字符
 	secretKey := strings.TrimSpace(h.cfg.Payment.NodelocSecretKey)
-	fmt.Printf("  Secret key (first 10 chars): %s...\n", secretKey[:10])
-	fmt.Printf("  Secret key length: %d\n", len(secretKey))
 
 	// 3. 计算 token_hash = SHA256(secret_key) 并转换为十六进制字符串
 	tokenHash := sha256.Sum256([]byte(secretKey))
 	tokenHashHex := hex.EncodeToString(tokenHash[:])
-	fmt.Printf("  Token hash (hex): %s\n", tokenHashHex)
 
 	// 4. 使用十六进制字符串作为 HMAC 密钥（这是关键！）
 	mac := hmac.New(sha256.New, []byte(tokenHashHex))
 	mac.Write([]byte(message))
 	signature := hex.EncodeToString(mac.Sum(nil))
-
-	fmt.Printf("  Generated signature: %s\n", signature)
 
 	return signature
 }
@@ -746,31 +725,19 @@ func (h *PaymentHandler) verifyCallbackSignature(rawParams map[string]string, si
 	}
 	message := strings.Join(parts, "&")
 
-	// 调试日志
-	fmt.Printf("[DEBUG] Callback signature verification:\n")
-	fmt.Printf("  Received signature: %s\n", signature)
-	fmt.Printf("  Parameters: %+v\n", rawParams)
-	fmt.Printf("  Sorted keys: %v\n", keys)
-	fmt.Printf("  Message string: %s\n", message)
-
 	// 3. 使用和发起支付相同的算法：先对 secret_key 进行 SHA256 哈希，转成十六进制
 	secretKey := strings.TrimSpace(h.cfg.Payment.NodelocSecretKey)
-	fmt.Printf("  Secret key (first 10 chars): %s...\n", secretKey[:10])
 
 	// 计算 token_hash = SHA256(secret_key) 并转换为十六进制字符串
 	tokenHash := sha256.Sum256([]byte(secretKey))
 	tokenHashHex := hex.EncodeToString(tokenHash[:])
-	fmt.Printf("  Token hash (hex): %s\n", tokenHashHex)
 
 	// 使用十六进制字符串作为 HMAC 密钥
 	mac := hmac.New(sha256.New, []byte(tokenHashHex))
 	mac.Write([]byte(message))
 	expectedSignature := hex.EncodeToString(mac.Sum(nil))
 
-	fmt.Printf("  Expected signature: %s\n", expectedSignature)
-	fmt.Printf("  Signatures match: %v\n", expectedSignature == signature)
-
-	// 使用恒定时间比较防止时序攻击
+	// 使用恒定时间比较防止时序攻击（不打印签名/参数，避免日志泄露）
 	return hmac.Equal([]byte(expectedSignature), []byte(signature))
 }
 
