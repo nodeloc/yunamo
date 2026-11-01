@@ -49,6 +49,10 @@ func ensureCanonicalNS(nameservers []string) []string {
 
 // nameserverHostnameRe matches a hostname made of DNS labels (RFC 1123) with
 // at least two labels; a trailing dot is stripped before matching.
+// dnsTargetRe 匹配 CNAME/ALIAS 目标。下划线不是合法主机名字符，但 ACM、DKIM 等
+// 服务的 CNAME 目标会用到，所以这里放行。
+var dnsTargetRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,63}(\.[A-Za-z0-9_-]{1,63})*$`)
+
 var nameserverHostnameRe = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // normalizeNameservers trims whitespace, lowercases, strips the trailing dot,
@@ -223,14 +227,14 @@ func (h *DNSHandler) CreateRecord(c *gin.Context) {
 		req.Priority = &defaultPriority
 	}
 
+	// 规范化用户输入（去除 CNAME/ALIAS 首尾引号等）
+	req.Content = normalizeUserContent(req.Type, req.Content)
+
 	// 验证记录内容
 	if err := validateDNSRecord(req.Type, req.Content); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	// 规范化用户输入（去除 CNAME/ALIAS 首尾引号等）
-	req.Content = normalizeUserContent(req.Type, req.Content)
 
 	// CNAME/ALIAS 冲突检查：CNAME/ALIAS 不能与同名的其他记录共存（仅检查活跃记录）
 	var conflictCount int64
@@ -326,6 +330,7 @@ func (h *DNSHandler) UpdateRecord(c *gin.Context) {
 	}
 
 	// 更新字段
+	oldType, oldContent := record.Type, record.Content
 	if req.Name != nil {
 		record.Name = *req.Name
 	}
@@ -343,6 +348,14 @@ func (h *DNSHandler) UpdateRecord(c *gin.Context) {
 	}
 	if req.IsActive != nil {
 		record.IsActive = *req.IsActive
+	}
+
+	// 内容变化时才校验，避免历史记录连 TTL 都改不了、也无法禁用
+	if record.Type != oldType || record.Content != oldContent {
+		if err := validateDNSRecord(record.Type, record.Content); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	// 标记为未同步
@@ -493,7 +506,14 @@ func validateDNSRecord(recordType, content string) error {
 		if !isValidIPv6(content) {
 			return fmt.Errorf("invalid IPv6 address")
 		}
-	case "CNAME", "ALIAS", "NS":
+	case "CNAME", "ALIAS":
+		if content == "" {
+			return fmt.Errorf("content cannot be empty")
+		}
+		if !isValidDNSTarget(content) {
+			return fmt.Errorf("invalid domain name")
+		}
+	case "NS":
 		// 域名验证
 		if content == "" {
 			return fmt.Errorf("content cannot be empty")
@@ -510,6 +530,23 @@ func validateDNSRecord(recordType, content string) error {
 		}
 	}
 	return nil
+}
+
+// isValidDNSTarget 校验 CNAME/ALIAS 目标，允许末尾带点的绝对域名
+func isValidDNSTarget(target string) bool {
+	target = strings.TrimSuffix(target, ".")
+	return len(target) <= 253 && dnsTargetRe.MatchString(target)
+}
+
+// luaCNAMEEntry 构造根域名 CNAME Flattening 的 LUA 记录。
+// 目标会被拼进 Lua 代码，这里必须再校验一次：库里可能有校验加入之前写入的内容。
+func luaCNAMEEntry(content string) (powerdns.RecordEntry, error) {
+	// 去掉用户可能误加的引号，确保 Lua 语法正确
+	target := strings.TrimSuffix(strings.Trim(content, "'\"`"), ".")
+	if !isValidDNSTarget(target) {
+		return powerdns.RecordEntry{}, fmt.Errorf("invalid CNAME target")
+	}
+	return powerdns.RecordEntry{Content: fmt.Sprintf("CNAME \";return '%s.'\"", target)}, nil
 }
 
 func isValidIPv4(ip string) bool {
@@ -566,13 +603,18 @@ func (h *DNSHandler) syncRecordSetToPowerDNS(record *models.DNSRecord, domain *m
 	if record.Type == "CNAME" && isApexRecord(record.Name) {
 		pdnsType = "LUA"
 		for _, r := range allRecords {
-			// 去掉用户可能误加的引号，确保 Lua 语法正确
-			target := strings.Trim(r.Content, "'\"`")
-			target = strings.TrimSuffix(target, ".")
-			target += "."
-			entries = append(entries, powerdns.RecordEntry{
-				Content: fmt.Sprintf("CNAME \";return '%s'\"", target),
-			})
+			entry, err := luaCNAMEEntry(r.Content)
+			if err != nil {
+				syncErr := err.Error()
+				for i := range allRecords {
+					allRecords[i].SyncError = &syncErr
+					allRecords[i].SyncedToPowerDNS = false
+					h.db.Save(&allRecords[i])
+				}
+				h.updateDomainSyncStatus(record.DomainID)
+				return
+			}
+			entries = append(entries, entry)
 		}
 	} else {
 		for _, r := range allRecords {
@@ -682,12 +724,16 @@ func (h *DNSHandler) deleteRecordFromPowerDNS(record *models.DNSRecord, domain *
 		entries := make([]powerdns.RecordEntry, 0, len(remaining))
 		if pdnsType == "LUA" {
 			for _, r := range remaining {
-				target := strings.Trim(r.Content, "'\"`")
-				target = strings.TrimSuffix(target, ".")
-				target += "."
-				entries = append(entries, powerdns.RecordEntry{
-					Content: fmt.Sprintf("CNAME \";return '%s'\"", target),
-				})
+				entry, err := luaCNAMEEntry(r.Content)
+				if err != nil {
+					// 剩余内容不能再写回 PowerDNS，直接清掉整个 RRset
+					if err := h.pdns.DeleteRRset(zoneDomain, recordFQDN, pdnsType); err != nil {
+						fmt.Printf("Warning: Failed to delete RRset from PowerDNS: %v\n", err)
+					}
+					h.updateDomainSyncStatus(record.DomainID)
+					return
+				}
+				entries = append(entries, entry)
 			}
 		} else {
 			for _, r := range remaining {
