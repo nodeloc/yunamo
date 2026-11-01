@@ -5,9 +5,11 @@ import (
 	"strings"
 
 	"opendomain/internal/config"
+	"opendomain/internal/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"gorm.io/gorm"
 )
 
 // Claims JWT 声明
@@ -20,7 +22,10 @@ type Claims struct {
 }
 
 // AuthMiddleware JWT 认证中间件
-func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
+//
+// 除验签外还会查询数据库：被封禁/冻结/删除的账号，其旧 token 在过期前也应
+// 立即失效；管理员权限以数据库当前值为准，避免降权后旧 token 仍可操作后台。
+func AuthMiddleware(db *gorm.DB, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -39,11 +44,11 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 
 		tokenString := parts[1]
 
-		// 解析 token
+		// 解析 token，并限定签名算法为 HS256，防止算法混淆
 		claims := &Claims{}
 		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
 			return []byte(cfg.JWT.Secret), nil
-		})
+		}, jwt.WithValidMethods([]string{"HS256"}))
 
 		if err != nil || !token.Valid {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": T(c, "error.unauthorized")})
@@ -51,11 +56,24 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
+		// 校验账号仍然存在且处于激活状态
+		var user models.User
+		if err := db.Select("id", "is_admin", "status").First(&user, claims.UserID).Error; err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": T(c, "error.unauthorized")})
+			c.Abort()
+			return
+		}
+		if user.Status != "active" {
+			c.JSON(http.StatusForbidden, gin.H{"error": T(c, "error.forbidden")})
+			c.Abort()
+			return
+		}
+
 		// 设置用户信息到上下文
-		c.Set("user_id", claims.UserID)
+		c.Set("user_id", user.ID)
 		c.Set("username", claims.Username)
 		c.Set("email", claims.Email)
-		c.Set("is_admin", claims.IsAdmin)
+		c.Set("is_admin", user.IsAdmin)
 
 		c.Next()
 	}

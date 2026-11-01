@@ -123,7 +123,7 @@ func Setup(db *gorm.DB, rdb *redis.Client, cfg *config.Config) *gin.Engine {
 
 		// 需要认证的路由
 		protected := api.Group("")
-		protected.Use(middleware.AuthMiddleware(cfg))
+		protected.Use(middleware.AuthMiddleware(db, cfg))
 		{
 			// 用户相关
 			user := protected.Group("/user")
@@ -214,7 +214,7 @@ func Setup(db *gorm.DB, rdb *redis.Client, cfg *config.Config) *gin.Engine {
 
 		// 管理员路由
 		admin := api.Group("/admin")
-		admin.Use(middleware.AuthMiddleware(cfg))
+		admin.Use(middleware.AuthMiddleware(db, cfg))
 		admin.Use(middleware.AdminMiddleware())
 		{
 			// 系统设置
