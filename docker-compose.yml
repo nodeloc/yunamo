@@ -180,9 +180,12 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       REDIS_DB: ${REDIS_DB:-0}
 
-      # JWT 配置
-      JWT_SECRET: ${JWT_SECRET:-change-this-secret-key}
+      # JWT 配置（必须设置，生成方式：openssl rand -hex 32）
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required - generate one with: openssl rand -hex 32}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-2}
+
+      # CyberPanel 凭据加密密钥（启用 CyberPanel 主机功能时必填）
+      CYBERPANEL_ENCRYPTION_KEY: ${CYBERPANEL_ENCRYPTION_KEY:-}
 
       # PowerDNS 配置（外部 PowerDNS 填实际地址；内置 PowerDNS 用 http://powerdns:8081）
       POWERDNS_API_URL: ${POWERDNS_API_URL:-http://powerdns:8081}

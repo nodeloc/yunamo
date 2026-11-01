@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -155,10 +156,33 @@ func (h *CyberPanelHandler) callCyberPanel(serverURL, endpoint string, payload c
 }
 
 func (h *CyberPanelHandler) decryptPass(enc string) (string, error) {
-	return crypto.Decrypt(enc, h.cfg.CyberPanel.EncryptionKey)
+	plain, err := crypto.Decrypt(enc, h.cfg.CyberPanel.EncryptionKey)
+	if err != nil {
+		// 更换 CYBERPANEL_ENCRYPTION_KEY 后旧密文无法解密；返回明确错误，
+		// 提示管理员重新录入服务器/账号凭据，而不是暴露底层解密错误。
+		return "", errors.New("failed to decrypt stored credential: the CyberPanel encryption key may have changed; re-enter the affected credentials")
+	}
+	return plain, nil
+}
+
+var errCyberPanelKeyUnset = errors.New("CYBERPANEL_ENCRYPTION_KEY is not configured securely; set a random value of at least 32 characters before using CyberPanel")
+
+// weakEncryptionKey reports whether the configured key is missing or is the
+// publicly known placeholder. Credentials must not be persisted with such a
+// key, so encryption fails closed instead of silently using a guessable key.
+func (h *CyberPanelHandler) weakEncryptionKey() bool {
+	k := strings.TrimSpace(h.cfg.CyberPanel.EncryptionKey)
+	switch k {
+	case "", "change-this-secret-key-32-chars!":
+		return true
+	}
+	return len(k) < 32
 }
 
 func (h *CyberPanelHandler) encryptPass(plain string) (string, error) {
+	if h.weakEncryptionKey() {
+		return "", errCyberPanelKeyUnset
+	}
 	return crypto.Encrypt(plain, h.cfg.CyberPanel.EncryptionKey)
 }
 

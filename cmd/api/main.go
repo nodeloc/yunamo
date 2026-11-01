@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,6 +22,36 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// checkSecrets refuses to start a production deployment with placeholder or
+// trivially short secrets, and warns about weak optional ones. A publicly known
+// JWT secret lets anyone forge admin tokens, so this is fatal in production.
+func checkSecrets(cfg *config.Config) {
+	weak := func(v string, min int) bool {
+		v = strings.TrimSpace(v)
+		switch v {
+		case "", "change-this-secret-key", "change-this-secret-key-32-chars!",
+			"your-super-secret-jwt-key-change-this-in-production", "changeme-pdns-api-key",
+			"changeme":
+			return true
+		}
+		return len(v) < min
+	}
+
+	if weak(cfg.JWT.Secret, 32) {
+		msg := "JWT_SECRET is unset, uses a known default, or is shorter than 32 characters; set a strong random value"
+		if cfg.Env == "production" {
+			logger.Fatalf("%s", msg)
+		}
+		logger.Warnf("%s (development mode: continuing)", msg)
+	}
+	if weak(cfg.CyberPanel.EncryptionKey, 32) {
+		logger.Warnf("CYBERPANEL_ENCRYPTION_KEY is unset or uses a known default; stored CyberPanel credentials are NOT safely encrypted")
+	}
+	if weak(cfg.PowerDNS.APIKey, 16) {
+		logger.Warnf("POWERDNS_API_KEY is unset or uses a known default")
+	}
+}
+
 func main() {
 	// 加载配置
 	cfg, err := config.Load()
@@ -31,6 +62,9 @@ func main() {
 	// 初始化日志
 	logger.Init(cfg.LogLevel)
 	defer logger.Sync()
+
+	// 校验密钥强度（生产环境使用默认密钥时拒绝启动）
+	checkSecrets(cfg)
 
 	logger.Info("Starting OpenDomain API Server...")
 	logger.Infof("Environment: %s", cfg.Env)
