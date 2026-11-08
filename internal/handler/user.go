@@ -106,14 +106,14 @@ func (h *UserHandler) Register(c *gin.Context) {
 		return
 	}
 
-	// 如果有邀请人，处理邀请奖励
+	// 如果有邀请人，先记录邀请；奖励要等被邀请人验证邮箱后才发放
+	// （见 grantInvitationReward），防止批量注册假账号刷配额。
 	if inviterID != nil {
-		// 创建邀请记录
 		invitation := &models.Invitation{
 			InviterID:   *inviterID,
 			InviteeID:   user.ID,
 			InviteCode:  *req.InviteCode,
-			RewardGiven: true,
+			RewardGiven: false,
 			RewardType:  "quota_increase",
 			RewardValue: "inviter: +1 quota, invitee: +1 quota",
 		}
@@ -124,20 +124,8 @@ func (h *UserHandler) Register(c *gin.Context) {
 			return
 		}
 
-		// 更新邀请人数据：增加配额和邀请统计
-		if err := tx.Model(&models.User{}).Where("id = ?", inviterID).Updates(map[string]interface{}{
-			"domain_quota":       gorm.Expr("domain_quota + ?", 1),
-			"total_invites":      gorm.Expr("total_invites + ?", 1),
-			"successful_invites": gorm.Expr("successful_invites + ?", 1),
-		}).Error; err != nil {
-			tx.Rollback()
-			c.JSON(http.StatusInternalServerError, gin.H{"error": middleware.T(c, "error.internal_server")})
-			return
-		}
-
-		// 给新用户增加额外配额（邀请奖励）
-		user.DomainQuota += 1
-		if err := tx.Save(user).Error; err != nil {
+		if err := tx.Model(&models.User{}).Where("id = ?", inviterID).
+			UpdateColumn("total_invites", gorm.Expr("total_invites + ?", 1)).Error; err != nil {
 			tx.Rollback()
 			c.JSON(http.StatusInternalServerError, gin.H{"error": middleware.T(c, "error.internal_server")})
 			return

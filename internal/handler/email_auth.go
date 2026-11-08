@@ -292,6 +292,10 @@ func (h *UserHandler) ResetPassword(c *gin.Context) {
 		}).Error; err != nil {
 			return err
 		}
+		// 能收到重置邮件同样证明了邮箱归属
+		if err := grantInvitationReward(tx, user.ID); err != nil {
+			return err
+		}
 		return tx.Model(&models.EmailToken{}).
 			Where("user_id = ? AND purpose = ? AND used_at IS NULL", user.ID, models.EmailTokenPurposeResetPassword).
 			Update("used_at", now).Error
@@ -337,6 +341,9 @@ func (h *UserHandler) VerifyEmail(c *gin.Context) {
 			return errInvalidEmailToken
 		}
 		if err := tx.Model(&models.User{}).Where("id = ?", user.ID).Update("email_verified", true).Error; err != nil {
+			return err
+		}
+		if err := grantInvitationReward(tx, user.ID); err != nil {
 			return err
 		}
 		verifiedEmail = user.Email

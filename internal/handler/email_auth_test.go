@@ -65,7 +65,7 @@ func newTestDB(t *testing.T) *gorm.DB {
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { sqlDB.Close() })
-	if err := db.AutoMigrate(&models.User{}, &models.EmailToken{}, &models.AbuseReport{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.EmailToken{}, &models.AbuseReport{}, &models.Invitation{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	return db
