@@ -88,7 +88,7 @@ import { useI18n } from 'vue-i18n'
 import {
   Menu, ArrowUpRight, LogOut, LayoutDashboard, Globe, Receipt, Ticket, Gift, User,
   Gauge, Network, ListTree, Clock, Users, ShoppingCart, BadgePercent, Megaphone, FileText,
-  Activity, Server, Settings, Flag, HeartHandshake, Handshake,
+  Activity, Settings, Flag, HeartHandshake, Handshake,
 } from 'lucide-vue-next'
 import { useAuthStore } from '../stores/auth'
 import { useSiteConfigStore } from '../stores/siteConfig'
@@ -139,7 +139,6 @@ const adminItems = computed(() => [
   { to: '/admin/sponsors', label: t('sponsorAdmin.nav'), icon: HeartHandshake },
   { to: '/admin/partner-applications', label: t('partnerAdmin.nav'), icon: Handshake },
   { to: '/admin/scan-status', label: t('admin.scanStatus'), icon: Activity },
-  { to: '/admin/cyberpanel', label: t('admin.cyberPanel'), icon: Server },
   { to: '/admin/settings', label: t('admin.settings'), icon: Settings },
 ])
 

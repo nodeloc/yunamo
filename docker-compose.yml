@@ -181,7 +181,7 @@ services:
       REDIS_DB: ${REDIS_DB:-0}
 
       # JWT 配置
-      JWT_SECRET: ${JWT_SECRET:-change-this-secret-key}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set (openssl rand -hex 48)}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-2}
 
       # PowerDNS 配置（外部 PowerDNS 填实际地址；内置 PowerDNS 用 http://powerdns:8081）

@@ -36,7 +36,6 @@ type Config struct {
 	OAuth       OAuthConfig
 	Telegram    TelegramConfig
 	FOSSBilling FOSSBillingConfig
-	CyberPanel  CyberPanelConfig
 }
 
 type DatabaseConfig struct {
@@ -110,10 +109,6 @@ type FOSSBillingConfig struct {
 	Enabled     bool
 	URL         string
 	AdminAPIKey string
-}
-
-type CyberPanelConfig struct {
-	EncryptionKey string
 }
 
 // Load 加载配置
@@ -218,13 +213,38 @@ func Load() (*Config, error) {
 			URL:         viper.GetString("FOSSBILLING_URL"),
 			AdminAPIKey: viper.GetString("FOSSBILLING_ADMIN_API_KEY"),
 		},
+	}
 
-		CyberPanel: CyberPanelConfig{
-			EncryptionKey: viper.GetString("CYBERPANEL_ENCRYPTION_KEY"),
-		},
+	if err := validateJWTSecret(cfg.JWT.Secret); err != nil {
+		return nil, err
 	}
 
 	return cfg, nil
+}
+
+// minJWTSecretLength 是 HS256 密钥的最小长度（字节）。
+const minJWTSecretLength = 32
+
+// knownPlaceholderJWTSecrets 是仓库模板里出现过的占位密钥。任何人都能用它们
+// 伪造 is_admin=true 的 token，因此一律拒绝启动。
+var knownPlaceholderJWTSecrets = map[string]bool{
+	"your-super-secret-jwt-key-change-this-in-production": true,
+	"change-this-secret-key":                              true,
+	"dev-secret-key":                                      true,
+}
+
+// validateJWTSecret 拒绝空的、模板默认的或过短的 JWT 密钥。
+func validateJWTSecret(secret string) error {
+	const hint = "generate one with: openssl rand -hex 48"
+	switch {
+	case secret == "":
+		return fmt.Errorf("JWT_SECRET is not set; %s", hint)
+	case knownPlaceholderJWTSecrets[secret]:
+		return fmt.Errorf("JWT_SECRET is a published placeholder value and must be replaced; %s", hint)
+	case len(secret) < minJWTSecretLength:
+		return fmt.Errorf("JWT_SECRET must be at least %d characters; %s", minJWTSecretLength, hint)
+	}
+	return nil
 }
 
 func setDefaults() {
@@ -256,7 +276,6 @@ func setDefaults() {
 	viper.SetDefault("DEFAULT_NS2", "ns2.nodelook.com")
 
 	viper.SetDefault("FOSSBILLING_ENABLED", false)
-	viper.SetDefault("CYBERPANEL_ENCRYPTION_KEY", "change-this-secret-key-32-chars!")
 }
 
 // InitDatabase 初始化数据库连接

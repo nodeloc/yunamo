@@ -28,10 +28,9 @@ import (
 )
 
 type DomainHandler struct {
-	db        *gorm.DB
-	cfg       *config.Config
-	pdns      *powerdns.Client
-	cpHandler *CyberPanelHandler
+	db   *gorm.DB
+	cfg  *config.Config
+	pdns *powerdns.Client
 }
 
 // errQuotaExceeded 表示注册会超出用户域名配额（需要购买或使用额度券）。
@@ -46,11 +45,6 @@ func NewDomainHandler(db *gorm.DB, cfg *config.Config) *DomainHandler {
 		cfg:  cfg,
 		pdns: powerdns.NewClient(cfg.PowerDNS.APIURL, cfg.PowerDNS.APIKey),
 	}
-}
-
-// SetCyberPanelHandler 注入 CyberPanel 处理器，实现域名联动
-func (h *DomainHandler) SetCyberPanelHandler(cp *CyberPanelHandler) {
-	h.cpHandler = cp
 }
 
 // ListRootDomains 获取根域名列表
@@ -1048,7 +1042,7 @@ func (h *DomainHandler) DeleteDomain(c *gin.Context) {
 			return errDomainAccessDenied
 		}
 		return nil
-	}, true)
+	})
 	if err != nil {
 		writeDomainDeleteError(c, err)
 		return
@@ -1070,7 +1064,7 @@ const postgresLockNotAvailableError = "55P03"
 // can take 10s+ to fail) lets duplicate delete requests pile up, and one that
 // finishes after the domain was re-registered (restoring the same soft-deleted
 // row) deletes the new registration and its DNS data.
-func (h *DomainHandler) deleteDomainExclusive(domainID interface{}, authorize func(*models.Domain) error, terminateHosting bool) (*models.Domain, error) {
+func (h *DomainHandler) deleteDomainExclusive(domainID interface{}, authorize func(*models.Domain) error) (*models.Domain, error) {
 	var domain models.Domain
 	err := h.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "NOWAIT"}).
@@ -1087,10 +1081,6 @@ func (h *DomainHandler) deleteDomainExclusive(domainID interface{}, authorize fu
 			if err := tx.First(&rootDomain, domain.RootDomainID).Error; err == nil {
 				domain.RootDomain = &rootDomain
 			}
-		}
-
-		if terminateHosting && h.cpHandler != nil {
-			h.cpHandler.TerminateAccountByDomain(domain.ID)
 		}
 
 		if err := h.deleteAllDNSRecordsForDomain(tx, &domain); err != nil {
@@ -2593,17 +2583,6 @@ func (h *DomainHandler) AdminUpdateDomainStatus(c *gin.Context) {
 		}()
 	}
 
-	// 联动 CyberPanel：同步主机账号状态
-	if h.cpHandler != nil {
-		go func() {
-			if req.Status == "suspended" {
-				h.cpHandler.SuspendAccountByDomain(domain.ID)
-			} else if req.Status == "active" && oldStatus == "suspended" {
-				h.cpHandler.UnsuspendAccountByDomain(domain.ID)
-			}
-		}()
-	}
-
 	// 重新加载域名数据以返回最新信息
 	if err := h.db.Preload("User").Preload("RootDomain").First(&domain, domainID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reload domain"})
@@ -2644,7 +2623,7 @@ func (h *DomainHandler) deleteAllDNSRecordsForDomain(db *gorm.DB, domain *models
 func (h *DomainHandler) AdminDeleteDomain(c *gin.Context) {
 	domainID := c.Param("id")
 
-	domain, err := h.deleteDomainExclusive(domainID, nil, true)
+	domain, err := h.deleteDomainExclusive(domainID, nil)
 	if err != nil {
 		writeDomainDeleteError(c, err)
 		return
@@ -2822,7 +2801,7 @@ func (h *DomainHandler) CleanupExpiredDomains(daysAfterExpiry int) {
 				return fmt.Errorf("domain no longer eligible for expiry cleanup")
 			}
 			return nil
-		}, false)
+		})
 		if err != nil {
 			fmt.Printf("Error: Failed to delete domain %s: %v\n", domain.FullDomain, err)
 			failCount++

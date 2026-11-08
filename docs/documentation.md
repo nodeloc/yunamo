@@ -13,7 +13,7 @@
 
 ## Overview
 
-**OpenDomain** is an open-source **free subdomain distribution platform**. It allows users to register and self-manage custom subdomains (e.g., `mysite.example.com`) backed by **PowerDNS**. The platform supports paid domains via the NodeLoc payment gateway, a coupon and invitation system, domain health scanning, and CyberPanel web hosting integration.
+**OpenDomain** is an open-source **free subdomain distribution platform**. It allows users to register and self-manage custom subdomains (e.g., `mysite.example.com`) backed by **PowerDNS**. The platform supports paid domains via the NodeLoc payment gateway, a coupon and invitation system and domain health scanning.
 
 ## Technology Stack
 
@@ -26,7 +26,6 @@
 | Frontend | Vue 3 · Vue Router · Pinia |
 | Authentication | Local (email + password) · GitHub OAuth · Google OAuth · NodeLoc OAuth |
 | Payment | NodeLoc Payment Gateway |
-| Web Hosting | CyberPanel API |
 | Internationalization | Request-level i18n middleware |
 
 ## Deployment
@@ -68,7 +67,6 @@ docker-compose -f docker-compose.dev.yml up -d
 | Payment | `NODELOC_PAYMENT_ID`, `NODELOC_SECRET_KEY`, `PAYMENT_CALLBACK_URL`, `PAYMENT_TEST_MODE` |
 | OAuth | `GITHUB_CLIENT_ID/SECRET`, `GOOGLE_CLIENT_ID/SECRET`, `NODELOC_CLIENT_ID/SECRET` |
 | Scanner | `GOOGLE_SAFE_BROWSING_KEY`, `VIRUSTOTAL_API_KEY`, `SCANNER_CONCURRENCY`, `SCANNER_TIMEOUT` |
-| CyberPanel | `CYBERPANEL_ENCRYPTION_KEY` |
 | Telegram | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHANNEL_ID` |
 
 ## User Levels
@@ -113,10 +111,6 @@ The platform periodically scans all domains for:
 
 Overall health is reported as `healthy`, `degraded`, or `down`. Domains that remain unhealthy can be automatically suspended.
 
-### Web Hosting (CyberPanel)
-
-Users can request a web hosting account linked to one of their active domains. Hosting accounts are provisioned on CyberPanel servers configured by the administrator.
-
 ### Announcements & Custom Pages
 
 Administrators can publish announcements (categories: general, maintenance, update, important) and custom slug-based static pages displayed in the frontend.
@@ -154,7 +148,6 @@ Administrators can publish announcements (categories: general, maintenance, upda
 | `/admin/orders` | AdminOrders | Admin | All orders |
 | `/admin/settings` | AdminSettings | Admin | Site and system settings |
 | `/admin/scan-status` | AdminScanStatus | Admin | Domain scan monitoring |
-| `/admin/cyberpanel` | AdminCyberPanel | Admin | CyberPanel server and account management |
 
 ---
 
@@ -253,17 +246,6 @@ Authorization: Bearer <token>
 | POST | `/api/payments/:orderId/complete-free` | Complete a free (₀) order |
 | GET | `/api/payments/:orderId/status` | Query payment status |
 
-## CyberPanel Hosting Endpoints (JWT Required)
-
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/cyberpanel/servers` | List available hosting servers |
-| GET | `/api/cyberpanel/accounts` | List my hosting accounts |
-| POST | `/api/cyberpanel/accounts` | Create a hosting account |
-| GET | `/api/cyberpanel/accounts/:id/credentials` | Get account credentials |
-| GET | `/api/cyberpanel/accounts/:id/autologin` | Auto-login to CyberPanel |
-| DELETE | `/api/cyberpanel/accounts/:id` | Delete a hosting account |
-
 ## Admin Endpoints (JWT + Admin Flag Required)
 
 | Group | Capabilities |
@@ -277,8 +259,6 @@ Authorization: Bearer <token>
 | Custom Pages | Full CRUD |
 | Orders | View all orders |
 | Scans | View API quotas, scan summaries, suspend history |
-| CyberPanel Servers | Full CRUD, test connection, admin auto-login |
-| CyberPanel Accounts | List all, suspend/unsuspend, terminate |
 
 ---
 

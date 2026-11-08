@@ -45,7 +45,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Users, Globe, Wallet, ChevronRight, Network, ListTree, Clock, ShoppingCart, BadgePercent,
-  Megaphone, FileText, Activity, Server, Settings,
+  Megaphone, FileText, Activity, Settings,
 } from 'lucide-vue-next'
 import axios from '../utils/axios'
 import { useSiteConfigStore } from '../stores/siteConfig'
@@ -80,7 +80,6 @@ const sections = computed(() => [
   { to: '/admin/announcements', icon: Megaphone, title: t('admin.announcements'), description: t('admin.announcementsDesc') },
   { to: '/admin/pages', icon: FileText, title: t('admin.pages'), description: t('admin.pagesDesc') },
   { to: '/admin/scan-status', icon: Activity, title: t('admin.scanStatus'), description: t('admin.scanStatusDesc') },
-  { to: '/admin/cyberpanel', icon: Server, title: t('admin.cyberPanel'), description: t('admin.cyberPanelDesc') },
   { to: '/admin/settings', icon: Settings, title: t('admin.settings'), description: t('admin.settingsDesc') },
 ])
 

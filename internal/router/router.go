@@ -58,8 +58,6 @@ func Setup(db *gorm.DB, rdb *redis.Client, cfg *config.Config) *gin.Engine {
 		pageHandler := handler.NewPageHandler(db, cfg)
 		settingHandler := handler.NewSettingHandlerWithRedis(db, rdb, cfg)
 		fossBillingSyncHandler := handler.NewFOSSBillingSyncHandler(db, cfg)
-		cyberPanelHandler := handler.NewCyberPanelHandler(db, cfg)
-		domainHandler.SetCyberPanelHandler(cyberPanelHandler)
 		abuseReportHandler := handler.NewAbuseReportHandler(db, rdb, cfg, mailer)
 		statusHandler := handler.NewStatusHandler(db, rdb, cfg)
 		sponsorHandler := handler.NewSponsorHandler(db, cfg)
@@ -199,17 +197,6 @@ func Setup(db *gorm.DB, rdb *redis.Client, cfg *config.Config) *gin.Engine {
 				payments.POST("/:orderId/complete-free", paymentHandler.CompleteFreeOrder)
 				payments.GET("/:orderId/status", paymentHandler.QueryPaymentStatus)
 			}
-
-			// CyberPanel 主机账号（用户）
-			cp := protected.Group("/cyberpanel")
-			{
-				cp.GET("/servers", cyberPanelHandler.ListPublicServers)
-				cp.GET("/accounts", cyberPanelHandler.ListMyAccounts)
-				cp.POST("/accounts", cyberPanelHandler.CreateAccount)
-				cp.GET("/accounts/:id/credentials", cyberPanelHandler.GetAccountCredentials)
-				cp.GET("/accounts/:id/autologin", cyberPanelHandler.AutoLogin)
-				cp.DELETE("/accounts/:id", cyberPanelHandler.DeleteMyAccount)
-			}
 		}
 
 		// 管理员路由
@@ -293,21 +280,6 @@ func Setup(db *gorm.DB, rdb *redis.Client, cfg *config.Config) *gin.Engine {
 			admin.GET("/partner-applications", partnerApplicationHandler.ListPartnerApplications)
 			admin.PUT("/partner-applications/:id", partnerApplicationHandler.UpdatePartnerApplication)
 			admin.DELETE("/partner-applications/:id", partnerApplicationHandler.DeletePartnerApplication)
-
-			// CyberPanel 服务器管理
-			cpAdmin := admin.Group("/cyberpanel")
-			{
-				cpAdmin.GET("/servers", cyberPanelHandler.AdminListServers)
-				cpAdmin.POST("/servers", cyberPanelHandler.AdminCreateServer)
-				cpAdmin.PUT("/servers/:id", cyberPanelHandler.AdminUpdateServer)
-				cpAdmin.DELETE("/servers/:id", cyberPanelHandler.AdminDeleteServer)
-				cpAdmin.POST("/servers/:id/test", cyberPanelHandler.AdminTestServer)
-				cpAdmin.GET("/servers/:id/autologin", cyberPanelHandler.AdminAutoLogin)
-				cpAdmin.GET("/accounts", cyberPanelHandler.AdminListAccounts)
-				cpAdmin.POST("/accounts/:id/suspend", cyberPanelHandler.AdminSuspendAccount)
-				cpAdmin.POST("/accounts/:id/unsuspend", cyberPanelHandler.AdminUnsuspendAccount)
-				cpAdmin.DELETE("/accounts/:id", cyberPanelHandler.AdminTerminateAccount)
-			}
 		}
 	}
 
