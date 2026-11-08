@@ -1,6 +1,7 @@
 package router
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-contrib/cors"
@@ -17,6 +18,11 @@ import (
 // Setup 设置路由
 func Setup(db *gorm.DB, rdb *redis.Client, cfg *config.Config) *gin.Engine {
 	r := gin.New()
+
+	// 只信任已知代理设置的 X-Forwarded-For，防止客户端伪造 IP 绕过限流
+	if err := r.SetTrustedProxies(cfg.TrustedProxies); err != nil {
+		panic(fmt.Sprintf("invalid TRUSTED_PROXIES: %v", err))
+	}
 
 	// 全局中间件
 	r.Use(gin.Logger())
@@ -57,7 +63,6 @@ func Setup(db *gorm.DB, rdb *redis.Client, cfg *config.Config) *gin.Engine {
 		paymentHandler := handler.NewPaymentHandler(db, cfg)
 		pageHandler := handler.NewPageHandler(db, cfg)
 		settingHandler := handler.NewSettingHandlerWithRedis(db, rdb, cfg)
-		fossBillingSyncHandler := handler.NewFOSSBillingSyncHandler(db, cfg)
 		abuseReportHandler := handler.NewAbuseReportHandler(db, rdb, cfg, mailer)
 		statusHandler := handler.NewStatusHandler(db, rdb, cfg)
 		sponsorHandler := handler.NewSponsorHandler(db, cfg)
@@ -83,8 +88,6 @@ func Setup(db *gorm.DB, rdb *redis.Client, cfg *config.Config) *gin.Engine {
 			// 页面
 			public.GET("/pages", pageHandler.GetPublicPages)
 			public.GET("/pages/:slug", pageHandler.GetPublicPageBySlug)
-			// 待激活域名列表(公开)
-			public.GET("/pending-domains", fossBillingSyncHandler.GetPublicPendingDomains)
 			// WHOIS 查询
 			public.GET("/whois/:domain", domainHandler.WhoisDomain)
 			// 系统状态
@@ -130,9 +133,6 @@ func Setup(db *gorm.DB, rdb *redis.Client, cfg *config.Config) *gin.Engine {
 				user.PUT("/profile", userHandler.UpdateProfile)
 				user.PUT("/change-password", userHandler.ChangePassword)
 				user.POST("/resend-verification", userHandler.ResendVerification)
-				// FOSSBilling 同步
-				user.POST("/sync-from-fossbilling", fossBillingSyncHandler.SyncFromFOSSBilling)
-				user.GET("/sync-status", fossBillingSyncHandler.GetSyncStatus)
 			}
 
 			// 域名相关
@@ -226,9 +226,6 @@ func Setup(db *gorm.DB, rdb *redis.Client, cfg *config.Config) *gin.Engine {
 			admin.POST("/domains", domainHandler.AdminCreateDomainForUser)
 			admin.PUT("/domains/:id/status", domainHandler.AdminUpdateDomainStatus)
 			admin.DELETE("/domains/:id", domainHandler.AdminDeleteDomain)
-			admin.POST("/sync-fossbilling-domains", fossBillingSyncHandler.AdminSyncAllDomains)
-			admin.GET("/pending-domains", fossBillingSyncHandler.ListPendingDomains)
-			admin.DELETE("/pending-domains/:id", fossBillingSyncHandler.DeletePendingDomain)
 			admin.GET("/orders", orderHandler.ListAllOrders)
 
 			// 根域名管理

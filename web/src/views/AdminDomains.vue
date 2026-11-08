@@ -6,17 +6,6 @@
       :description="$t('uiAdmin1.domains.description')"
     >
       <template #actions>
-        <button
-          v-if="fossbillingEnabled"
-          type="button"
-          class="btn btn-outline gap-2"
-          :disabled="syncing"
-          @click="syncFOSSBilling"
-        >
-          <span v-if="syncing" class="loading loading-spinner loading-sm"></span>
-          <RefreshCw v-else :size="16" :stroke-width="1.5" />
-          {{ syncing ? $t('adminDomains.syncing') : $t('adminDomains.syncFOSSBilling') }}
-        </button>
         <button type="button" class="btn btn-primary gap-2" @click="openCreateModal">
           <Plus :size="16" :stroke-width="1.5" />
           {{ $t('adminDomains.addDomain') }}
@@ -450,11 +439,10 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useSiteConfigStore } from '../stores/siteConfig'
 import axios from '../utils/axios'
 import { useToast } from '../composables/useToast'
 import {
-  Plus, RefreshCw, Search, X, Check, Eye, CirclePlay, CirclePause, Trash2, ChevronLeft, ChevronRight, UserRound,
+  Plus, Search, X, Check, Eye, CirclePlay, CirclePause, Trash2, ChevronLeft, ChevronRight, UserRound,
 } from 'lucide-vue-next'
 import PageHeader from '../components/ui/PageHeader.vue'
 import StatusDot from '../components/ui/StatusDot.vue'
@@ -463,7 +451,6 @@ import YLoader from '../components/brand/YLoader.vue'
 
 const { t } = useI18n()
 const toast = useToast()
-const siteConfig = useSiteConfigStore()
 
 const allDomains = ref([]) // 存储所有域名
 const domains = ref([]) // 显示的域名（可能经过过滤）
@@ -481,7 +468,6 @@ const suspendReason = ref('')
 const deleting = ref(false)
 const suspending = ref(false)
 const creating = ref(false)
-const syncing = ref(false) // FOSSBilling同步状态
 const rootDomains = ref([])
 const userSearchQuery = ref('')
 const userSuggestions = ref([])
@@ -508,7 +494,6 @@ const pagination = ref({
 })
 let searchTimeout = null
 
-const fossbillingEnabled = computed(() => siteConfig.fossbilling.enabled)
 
 const statusFilters = computed(() => [
   { key: '', dot: '', label: t('uiAdmin1.filters.all'), value: stats.value.total },
@@ -713,48 +698,6 @@ const handleSuspend = async () => {
     toast.error(error.response?.data?.error || t('adminDomains.statusUpdateFailed'))
   } finally {
     suspending.value = false
-  }
-}
-
-const syncFOSSBilling = async () => {
-  if (!confirm(t('adminDomains.confirmSync'))) {
-    return
-  }
-
-  syncing.value = true
-  try {
-    // 设置5分钟超时，因为同步大量域名需要时间
-    const res = await axios.post('/api/admin/sync-fossbilling-domains', {}, {
-      timeout: 300000 // 5分钟
-    })
-    const data = res.data
-
-    // 显示同步结果
-    const details = data.details || []
-    const summary = `${t('adminDomains.syncComplete')}\n` +
-      `${t('adminDomains.synced')}: ${data.synced_count}\n` +
-      `${t('adminDomains.skipped')}: ${data.skipped_count}\n` +
-      `${t('adminDomains.existing')}: ${data.existing_count}\n` +
-      `${t('adminDomains.errors')}: ${data.error_count}`
-
-    if (data.synced_count > 0 || data.skipped_count > 0) {
-      toast.success(summary)
-      // 刷新域名列表和统计
-      await fetchStats()
-      await fetchDomains(searchQuery.value)
-    } else {
-      toast.info(summary)
-    }
-
-    // 如果有详细信息，显示在控制台
-    if (details.length > 0) {
-      console.log('FOSSBilling Sync Details:', details)
-    }
-  } catch (error) {
-    console.error('Sync error:', error)
-    toast.error(error.response?.data?.error || t('adminDomains.syncFailed'))
-  } finally {
-    syncing.value = false
   }
 }
 

@@ -88,7 +88,7 @@ To report a domain, use [yunamo.com/report](https://yunamo.com/report) or email 
 - Announcements, custom pages, sponsors, and a public status page
 - Domain health scanning (DNS, HTTP, SSL and security checks)
 - Admin console for users, domains, orders, sponsors and settings
-- Telegram bot notifications, optional FOSSBilling integration
+- Telegram bot notifications
 
 ## 🛠️ Tech stack
 

@@ -168,10 +168,15 @@ const changePassword = async () => {
 
   changingPassword.value = true
   try {
-    await axios.put('/api/user/change-password', {
+    const res = await axios.put('/api/user/change-password', {
       current_password: passwordForm.currentPassword,
       new_password: passwordForm.newPassword
     })
+    // 改密后旧 token 全部失效，换用服务端返回的新 token
+    if (res.data?.token) {
+      authStore.token = res.data.token
+      try { localStorage.setItem('token', res.data.token) } catch (e) { /* ignore */ }
+    }
     toast.success(t('user.passwordChangeSuccess'))
     resetPasswordForm()
   } catch (error) {

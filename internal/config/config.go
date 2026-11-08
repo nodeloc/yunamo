@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -25,17 +26,18 @@ type Config struct {
 	// SupportEmail receives partner applications.
 	SupportEmail string
 
-	Database    DatabaseConfig
-	Redis       RedisConfig
-	JWT         JWTConfig
-	PowerDNS    PowerDNSConfig
-	Email       EmailConfig
-	Scanner     ScannerConfig
-	Payment     PaymentConfig
-	DNS         DNSConfig
-	OAuth       OAuthConfig
-	Telegram    TelegramConfig
-	FOSSBilling FOSSBillingConfig
+	Database DatabaseConfig
+	Redis    RedisConfig
+	JWT      JWTConfig
+	// TrustedProxies 是允许设置 X-Forwarded-For 的上游代理（IP 或 CIDR）。
+	TrustedProxies []string
+	PowerDNS       PowerDNSConfig
+	Email          EmailConfig
+	Scanner        ScannerConfig
+	Payment        PaymentConfig
+	DNS            DNSConfig
+	OAuth          OAuthConfig
+	Telegram       TelegramConfig
 }
 
 type DatabaseConfig struct {
@@ -105,12 +107,6 @@ type TelegramConfig struct {
 	ChannelID string
 }
 
-type FOSSBillingConfig struct {
-	Enabled     bool
-	URL         string
-	AdminAPIKey string
-}
-
 // Load 加载配置
 func Load() (*Config, error) {
 	// 加载 .env 文件
@@ -156,6 +152,8 @@ func Load() (*Config, error) {
 			Password: viper.GetString("REDIS_PASSWORD"),
 			DB:       viper.GetInt("REDIS_DB"),
 		},
+
+		TrustedProxies: parseTrustedProxies(viper.GetString("TRUSTED_PROXIES")),
 
 		JWT: JWTConfig{
 			Secret:    viper.GetString("JWT_SECRET"),
@@ -207,12 +205,6 @@ func Load() (*Config, error) {
 			BotToken:  viper.GetString("TELEGRAM_BOT_TOKEN"),
 			ChannelID: viper.GetString("TELEGRAM_CHANNEL_ID"),
 		},
-
-		FOSSBilling: FOSSBillingConfig{
-			Enabled:     viper.GetBool("FOSSBILLING_ENABLED"),
-			URL:         viper.GetString("FOSSBILLING_URL"),
-			AdminAPIKey: viper.GetString("FOSSBILLING_ADMIN_API_KEY"),
-		},
 	}
 
 	if err := validateJWTSecret(cfg.JWT.Secret); err != nil {
@@ -220,6 +212,35 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// defaultTrustedProxies 覆盖本机、Docker 内网以及 Cloudflare 边缘节点。
+// 链路为 Cloudflare -> nginx -> docker-proxy -> app：只有这些地址追加的
+// X-Forwarded-For 才会被采信，客户端自己伪造的部分会被忽略。
+// Cloudflare 网段来源：https://www.cloudflare.com/ips/
+var defaultTrustedProxies = []string{
+	"127.0.0.0/8", "::1/128",
+	"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7",
+	"173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
+	"141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
+	"197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+	"104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+	"2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32",
+	"2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32",
+}
+
+// parseTrustedProxies 解析逗号分隔的 TRUSTED_PROXIES；为空时使用默认列表。
+func parseTrustedProxies(raw string) []string {
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return append([]string(nil), defaultTrustedProxies...)
+	}
+	return out
 }
 
 // minJWTSecretLength 是 HS256 密钥的最小长度（字节）。
@@ -275,7 +296,6 @@ func setDefaults() {
 	viper.SetDefault("DEFAULT_NS1", "ns1.nodelook.com")
 	viper.SetDefault("DEFAULT_NS2", "ns2.nodelook.com")
 
-	viper.SetDefault("FOSSBILLING_ENABLED", false)
 }
 
 // InitDatabase 初始化数据库连接

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/mail"
 	"net/url"
@@ -176,13 +175,11 @@ func (h *AbuseReportHandler) incrWindow(ctx context.Context, key string) (int64,
 	return incrRateWindow(ctx, h.rdb, key, abuseReportRateWindow)
 }
 
-// reporterIP prefers the address Cloudflare saw, since production traffic
-// arrives through Cloudflare and nginx and gin trusts every proxy by default.
+// reporterIP returns the client address used for rate limiting. It relies on
+// gin's trusted-proxy handling (see router.Setup), so headers sent by clients
+// that are not a trusted proxy are ignored.
 func reporterIP(c *gin.Context) string {
 	ip := c.ClientIP()
-	if cf := strings.TrimSpace(c.GetHeader("CF-Connecting-IP")); cf != "" && net.ParseIP(cf) != nil {
-		ip = cf
-	}
 	if len(ip) > 64 {
 		ip = ip[:64]
 	}

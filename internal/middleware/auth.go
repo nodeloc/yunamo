@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"opendomain/internal/config"
 	"opendomain/internal/models"
@@ -19,6 +20,20 @@ type Claims struct {
 	Email    string `json:"email"`
 	IsAdmin  bool   `json:"is_admin"`
 	jwt.RegisteredClaims
+}
+
+// tokenRevokedByPasswordChange reports whether the token was issued before the
+// user's last password change. JWT iat has one-second resolution, so the change
+// time is truncated to the second; a token issued in that same second is kept,
+// which lets the change-password response hand back a fresh token.
+func tokenRevokedByPasswordChange(claims *Claims, changedAt *time.Time) bool {
+	if changedAt == nil {
+		return false
+	}
+	if claims.IssuedAt == nil {
+		return true
+	}
+	return claims.IssuedAt.Time.Before(changedAt.Truncate(time.Second))
 }
 
 // AuthMiddleware JWT 认证中间件
@@ -58,13 +73,20 @@ func AuthMiddleware(db *gorm.DB, cfg *config.Config) gin.HandlerFunc {
 
 		// 校验账号仍然存在且处于激活状态
 		var user models.User
-		if err := db.Select("id", "is_admin", "status").First(&user, claims.UserID).Error; err != nil {
+		if err := db.Select("id", "is_admin", "status", "password_changed_at").First(&user, claims.UserID).Error; err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": T(c, "error.unauthorized")})
 			c.Abort()
 			return
 		}
 		if user.Status != "active" {
 			c.JSON(http.StatusForbidden, gin.H{"error": T(c, "error.forbidden")})
+			c.Abort()
+			return
+		}
+
+		// 修改/重置密码后，之前签发的 token 失效
+		if tokenRevokedByPasswordChange(claims, user.PasswordChangedAt) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": T(c, "error.unauthorized")})
 			c.Abort()
 			return
 		}

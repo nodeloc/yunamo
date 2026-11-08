@@ -93,6 +93,7 @@
   "validation.password_too_long": "Password must be at most 72 bytes",
   "error.email_not_verified": "Verify your email address before claiming a domain.",
   "auth.reset_link_sent": "If an account exists for that email, we sent a reset link.",
+  "auth.login_rate_limited": "Too many failed login attempts. Please try again in 15 minutes.",
   "auth.forgot_password_rate_limited": "Too many password reset requests. Please try again later.",
   "auth.invalid_token": "This link is invalid or has expired. Please request a new one.",
   "auth.password_reset_success": "Your password has been reset. You can now sign in.",

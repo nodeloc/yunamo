@@ -302,108 +302,6 @@ func (s *Scanner) ScanAllDomains(ctx context.Context) error {
 	return nil
 }
 
-// ScanAllPendingDomains 扫描所有待激活域名（分批处理，遵守 API 速率限制）
-func (s *Scanner) ScanAllPendingDomains(ctx context.Context) error {
-	var pendingDomains []models.PendingDomain
-	if err := s.db.Where("deleted_at IS NULL").Find(&pendingDomains).Error; err != nil {
-		return fmt.Errorf("failed to fetch pending domains: %w", err)
-	}
-
-	totalDomains := len(pendingDomains)
-	if totalDomains == 0 {
-		fmt.Println("[INFO] No pending domains to scan")
-		return nil
-	}
-
-	fmt.Printf("[INFO] Starting scan for %d pending domains\n", totalDomains)
-
-	// 分批处理
-	batchSize := 50
-	for i := 0; i < totalDomains; i += batchSize {
-		end := i + batchSize
-		if end > totalDomains {
-			end = totalDomains
-		}
-
-		batch := pendingDomains[i:end]
-		fmt.Printf("[INFO] Processing batch %d-%d of %d pending domains\n", i+1, end, totalDomains)
-
-		for _, pending := range batch {
-			if err := s.ScanPendingDomain(ctx, &pending); err != nil {
-				fmt.Printf("[ERROR] Failed to scan pending domain %s: %v\n", pending.FullDomain, err)
-			}
-		}
-
-		// 批次之间等待
-		if end < totalDomains {
-			fmt.Printf("[INFO] Batch complete. Waiting 5 seconds before next batch...\n")
-			time.Sleep(5 * time.Second)
-		}
-	}
-
-	fmt.Printf("[INFO] Pending domains scan complete\n")
-	return nil
-}
-
-// ScanPendingDomain 扫描单个待激活域名
-func (s *Scanner) ScanPendingDomain(ctx context.Context, pending *models.PendingDomain) error {
-	// DNS 检查
-	dnsStatus := s.checkDNS(pending.FullDomain)
-
-	// HTTP 检查
-	httpScan := s.checkHTTP(pending.FullDomain)
-	httpStatus := httpScan.Status
-
-	// 判断域名是否不可访问
-	isDown := (dnsStatus == "failed" || httpStatus == "offline")
-
-	now := timeutil.Now()
-	telegram := services.NewTelegramService(s.cfg)
-
-	if isDown {
-		if pending.FirstFailedAt == nil {
-			// 记录首次失败时间
-			pending.FirstFailedAt = &now
-			pending.Status = "unhealthy"
-			s.db.Save(pending)
-
-			// 发送通知
-			telegram.SendHealthAlert(pending.FullDomain,
-				[]string{fmt.Sprintf("DNS: %s", dnsStatus), fmt.Sprintf("HTTP: %s", httpStatus)},
-				"Pending domain unhealthy - will be removed in 30 days if not resolved")
-			fmt.Printf("[INFO] Pending domain %s marked as unhealthy\n", pending.FullDomain)
-		} else {
-			daysSinceFailure := int(now.Sub(*pending.FirstFailedAt).Hours() / 24)
-
-			if daysSinceFailure >= 30 {
-				// 删除待激活域名
-				s.db.Delete(pending)
-				telegram.SendHealthAlert(pending.FullDomain,
-					[]string{"Pending domain down for 30+ days"},
-					"Pending domain REMOVED - now available for registration")
-				fmt.Printf("[INFO] Pending domain %s removed after 30 days of failure\n", pending.FullDomain)
-			} else if daysSinceFailure >= 7 {
-				// 7天后发送警告
-				pending.Status = "unhealthy"
-				s.db.Save(pending)
-				telegram.SendDeletionWarning(pending.FullDomain, 30-daysSinceFailure)
-				fmt.Printf("[WARNING] Pending domain %s unhealthy for %d days, will be removed in %d days\n",
-					pending.FullDomain, daysSinceFailure, 30-daysSinceFailure)
-			}
-		}
-	} else {
-		// 域名恢复健康
-		if pending.FirstFailedAt != nil {
-			pending.FirstFailedAt = nil
-			pending.Status = "pending"
-			s.db.Save(pending)
-			fmt.Printf("[INFO] Pending domain %s recovered\n", pending.FullDomain)
-		}
-	}
-
-	return nil
-}
-
 // ScanDomain 扫描单个域名
 func (s *Scanner) ScanDomain(ctx context.Context, domain *models.Domain) error {
 	// DNS 检查。挂起中的域名公网不可解析，改为根据数据库记录 / 用户自定义 NS
@@ -1160,7 +1058,6 @@ func (s *Scanner) StartPeriodicScanning(ctx context.Context, interval time.Durat
 
 	// 立即执行一次
 	s.ScanAllDomains(ctx)
-	s.ScanAllPendingDomains(ctx)
 
 	for {
 		select {
@@ -1168,7 +1065,6 @@ func (s *Scanner) StartPeriodicScanning(ctx context.Context, interval time.Durat
 			return
 		case <-ticker.C:
 			s.ScanAllDomains(ctx)
-			s.ScanAllPendingDomains(ctx)
 		}
 	}
 }

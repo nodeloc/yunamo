@@ -44,7 +44,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  Users, Globe, Wallet, ChevronRight, Network, ListTree, Clock, ShoppingCart, BadgePercent,
+  Users, Globe, Wallet, ChevronRight, Network, ListTree, ShoppingCart, BadgePercent,
   Megaphone, FileText, Activity, Settings,
 } from 'lucide-vue-next'
 import axios from '../utils/axios'
@@ -73,7 +73,6 @@ const statCells = computed(() => [
 const sections = computed(() => [
   { to: '/admin/root-domains', icon: Network, title: t('admin.rootDomains'), description: t('admin.rootDomainsDesc') },
   { to: '/admin/domains', icon: ListTree, title: t('admin.domains'), description: t('admin.domainsDesc') },
-  { to: '/admin/pending-domains', icon: Clock, title: t('admin.pendingDomains'), description: t('admin.pendingDomainsDesc') },
   { to: '/admin/users', icon: Users, title: t('admin.users'), description: t('admin.usersDesc') },
   { to: '/admin/orders', icon: ShoppingCart, title: t('admin.orders'), description: t('admin.ordersDesc') },
   { to: '/admin/coupons', icon: BadgePercent, title: t('admin.coupons'), description: t('admin.couponsDesc') },

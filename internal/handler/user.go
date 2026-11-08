@@ -170,18 +170,28 @@ func (h *UserHandler) Login(c *gin.Context) {
 		return
 	}
 
+	ctx := c.Request.Context()
+	ip := reporterIP(c)
+	if h.loginBlocked(ctx, ip, req.Email) {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": tr(c, "auth.login_rate_limited", "Too many failed login attempts. Please try again later.")})
+		return
+	}
+
 	// 查找用户
 	var user models.User
 	if err := h.db.Where("email = ?", req.Email).First(&user).Error; err != nil {
+		h.recordLoginFailure(ctx, ip, req.Email)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": middleware.T(c, "error.invalid_credentials")})
 		return
 	}
 
 	// 验证密码
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		h.recordLoginFailure(ctx, ip, req.Email)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": middleware.T(c, "error.invalid_credentials")})
 		return
 	}
+	h.clearLoginFailures(ctx, req.Email)
 
 	// 检查账号状态
 	if user.Status != "active" {
@@ -418,6 +428,7 @@ func (h *UserHandler) AdminUpdateUser(c *gin.Context) {
 			return
 		}
 		updates["password_hash"] = string(hashedPassword)
+		updates["password_changed_at"] = timeutil.Now()
 	}
 
 	if req.IsAdmin != nil {
@@ -507,13 +518,24 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	// 更新密码
-	if err := h.db.Model(&user).Update("password_hash", string(hashedPassword)).Error; err != nil {
+	// 更新密码，并让之前签发的 token 失效
+	now := timeutil.Now()
+	if err := h.db.Model(&user).Updates(map[string]interface{}{
+		"password_hash":       string(hashedPassword),
+		"password_changed_at": now,
+	}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update password"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Password updated successfully"})
+	// 返回新 token，当前会话保持登录，其他会话失效
+	token, err := generateToken(&user, h.cfg)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to issue token"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Password updated successfully", "token": token})
 }
 
 // generateToken 生成 JWT token

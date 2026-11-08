@@ -220,10 +220,6 @@ func (h *SettingHandler) GetPublicSiteConfig(c *gin.Context) {
 			"google":  h.cfg.OAuth.GoogleClientID != "",
 			"nodeloc": h.cfg.OAuth.NodelocClientID != "",
 		},
-		"fossbilling": gin.H{
-			"enabled": h.cfg.FOSSBilling.Enabled,
-			"url":     h.cfg.FOSSBilling.URL,
-		},
 	})
 }
 

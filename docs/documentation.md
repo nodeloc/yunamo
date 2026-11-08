@@ -174,7 +174,6 @@ Authorization: Bearer <token>
 | GET | `/api/public/health-statistics` | Get platform-wide scan statistics |
 | GET | `/api/public/pages` | List published custom pages |
 | GET | `/api/public/pages/:slug` | Get a page by slug |
-| GET | `/api/public/pending-domains` | List pending (pre-reserved) domains |
 | GET | `/api/public/whois/:domain` | WHOIS lookup |
 | GET | `/api/payments/callback` | NodeLoc payment callback (signature-verified) |
 | GET | `/api/payments/return` | Payment return redirect |

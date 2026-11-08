@@ -87,7 +87,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   Menu, ArrowUpRight, LogOut, LayoutDashboard, Globe, Receipt, Ticket, Gift, User,
-  Gauge, Network, ListTree, Clock, Users, ShoppingCart, BadgePercent, Megaphone, FileText,
+  Gauge, Network, ListTree, Users, ShoppingCart, BadgePercent, Megaphone, FileText,
   Activity, Settings, Flag, HeartHandshake, Handshake,
 } from 'lucide-vue-next'
 import { useAuthStore } from '../stores/auth'
@@ -129,7 +129,6 @@ const adminItems = computed(() => [
   { to: '/admin', label: t('shell.overview'), icon: Gauge, exact: true },
   { to: '/admin/root-domains', label: t('admin.rootDomains'), icon: Network },
   { to: '/admin/domains', label: t('admin.domains'), icon: ListTree },
-  { to: '/admin/pending-domains', label: t('admin.pendingDomains'), icon: Clock },
   { to: '/admin/users', label: t('admin.users'), icon: Users },
   { to: '/admin/orders', label: t('admin.orders'), icon: ShoppingCart },
   { to: '/admin/coupons', label: t('admin.coupons'), icon: BadgePercent },

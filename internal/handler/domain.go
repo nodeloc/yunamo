@@ -127,8 +127,6 @@ func (h *DomainHandler) SearchDomain(c *gin.Context) {
 
 	available := err == gorm.ErrRecordNotFound
 
-	reserved := false
-
 	response := gin.H{
 		"available":   available,
 		"subdomain":   req.Subdomain,
@@ -136,12 +134,7 @@ func (h *DomainHandler) SearchDomain(c *gin.Context) {
 		"full_domain": fullDomain,
 	}
 
-	if reserved {
-		response["reserved"] = true
-		response["message"] = "This domain is reserved and can only be activated by syncing from FOSSBilling"
-	}
-
-	if !available && !reserved {
+	if !available {
 		response["domain_info"] = gin.H{
 			"status":         existingDomain.Status,
 			"registered_at":  existingDomain.RegisteredAt,

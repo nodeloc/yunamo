@@ -93,6 +93,7 @@
   "validation.password_too_long": "密码不能超过 72 个字节",
   "error.email_not_verified": "领取域名前请先验证你的邮箱地址。",
   "auth.reset_link_sent": "如果该邮箱对应的账户存在，我们已发送重置密码链接。",
+  "auth.login_rate_limited": "登录失败次数过多，请 15 分钟后再试。",
   "auth.forgot_password_rate_limited": "重置密码请求过于频繁，请稍后再试。",
   "auth.invalid_token": "该链接无效或已过期，请重新获取。",
   "auth.password_reset_success": "密码已重置，现在可以登录了。",

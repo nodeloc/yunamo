@@ -96,11 +96,6 @@ const routes = [
     component: () => import('../views/AnnouncementDetail.vue'),
   },
   {
-    path: '/pending-domains',
-    name: 'PendingDomains',
-    component: () => import('../views/PendingDomains.vue'),
-  },
-  {
     path: '/admin/announcements',
     name: 'AdminAnnouncements',
     component: () => import('../views/AdminAnnouncements.vue'),
@@ -178,12 +173,6 @@ const routes = [
     path: '/admin/domains',
     name: 'AdminDomains',
     component: () => import('../views/AdminDomains.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, layout: 'console' },
-  },
-  {
-    path: '/admin/pending-domains',
-    name: 'AdminPendingDomains',
-    component: () => import('../views/AdminPendingDomains.vue'),
     meta: { requiresAuth: true, requiresAdmin: true, layout: 'console' },
   },
   {

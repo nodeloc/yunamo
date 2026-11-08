@@ -154,7 +154,8 @@ services:
       migrate:
         condition: service_completed_successfully
     ports:
-      - "${PORT:-8000}:8000"
+      # 默认只监听本机，由 nginx 反代；不要把 API 端口直接暴露到公网
+      - "${APP_BIND:-127.0.0.1}:${PORT:-8000}:8000"
     environment:
       # 应用配置
       APP_ENV: ${APP_ENV:-production}
@@ -223,11 +224,6 @@ services:
       # Telegram Bot
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID:-}
-
-      # FOSSBilling 集成
-      FOSSBILLING_ENABLED: ${FOSSBILLING_ENABLED:-false}
-      FOSSBILLING_URL: ${FOSSBILLING_URL:-}
-      FOSSBILLING_ADMIN_API_KEY: ${FOSSBILLING_ADMIN_API_KEY:-}
     volumes:
       - ./logs:/app/logs
       - ./.env:/app/.env:ro

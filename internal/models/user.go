@@ -30,6 +30,8 @@ type User struct {
 	Status           string         `gorm:"size:20;default:active" json:"status"` // active/frozen/banned
 	LastLoginAt   *time.Time     `json:"last_login_at,omitempty"`
 	LastLoginIP   *string        `gorm:"size:45" json:"last_login_ip,omitempty"`
+	// PasswordChangedAt 之前签发的 token 全部失效
+	PasswordChangedAt *time.Time `json:"-"`
 	CreatedAt     time.Time      `json:"created_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`

@@ -106,10 +106,6 @@
             {{ $t('app2.domains.newSubdomain') }}
           </router-link>
 
-          <button v-if="fossbillingEnabled" type="button" class="btn btn-outline btn-sm w-full gap-1.5" @click="openSyncModal">
-            <ArrowLeftRight :size="14" :stroke-width="1.5" />
-            {{ $t('uiDomains.syncTitle') }}
-          </button>
         </aside>
 
         <!-- Right: selected domain -->
@@ -517,91 +513,6 @@
       </form>
     </dialog>
 
-    <!-- FOSSBilling Sync Modal -->
-    <dialog :class="{ 'modal': true, 'modal-open': showSyncModal }">
-      <div class="modal-box max-w-2xl">
-        <h3 class="text-lg font-semibold text-y-text">{{ $t('uiDomains.syncTitle') }}</h3>
-        <p class="mt-1 text-sm text-y-muted">{{ $t('uiDomains.syncDesc') }}</p>
-
-        <div class="mt-5 space-y-4">
-          <label v-if="!siteConfig.fossbilling?.url" class="y-field">
-            <span class="y-field-label">{{ $t('uiDomains.syncUrl') }}</span>
-            <input
-              v-model="syncForm.fossbilling_url"
-              type="text"
-              placeholder="https://your-fossbilling-server.com"
-              class="input input-bordered w-full font-mono"
-              :disabled="syncInProgress"
-              autocomplete="off"
-              autocapitalize="off"
-              spellcheck="false"
-            />
-            <span class="y-field-hint">{{ $t('uiDomains.syncUrlHint') }}</span>
-          </label>
-
-          <div v-if="siteConfig.fossbilling?.url" class="alert alert-info items-start">
-            <Info :size="16" :stroke-width="1.5" class="mt-0.5 shrink-0" />
-            <span class="text-sm">{{ $t('uiDomains.syncFrom') }}: <span class="break-all font-mono">{{ siteConfig.fossbilling.url }}</span></span>
-          </div>
-
-          <label class="y-field">
-            <span class="y-field-label">{{ $t('uiDomains.syncKey') }}</span>
-            <input
-              v-model="syncForm.fossbilling_api_key"
-              type="text"
-              :placeholder="$t('uiDomains.syncKeyPlaceholder')"
-              class="input input-bordered w-full font-mono"
-              :disabled="syncInProgress"
-              autocomplete="off"
-              autocapitalize="off"
-              spellcheck="false"
-            />
-            <span class="y-field-hint">{{ $t('uiDomains.syncKeyHint') }}</span>
-          </label>
-
-          <!-- Sync results -->
-          <div v-if="syncResult" class="space-y-3">
-            <div class="alert items-start" :class="syncResult.error_count > 0 ? 'alert-warning' : 'alert-success'">
-              <TriangleAlert v-if="syncResult.error_count > 0" :size="18" :stroke-width="1.5" class="mt-0.5 shrink-0" />
-              <CircleCheck v-else :size="18" :stroke-width="1.5" class="mt-0.5 shrink-0 text-y-mint-text" />
-              <div class="min-w-0">
-                <p class="text-sm font-medium">{{ syncResult.message }}</p>
-                <p class="mt-1 flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs">
-                  <span>{{ $t('uiDomains.syncSynced') }} {{ syncResult.synced_count }}</span>
-                  <span>{{ $t('uiDomains.syncExisting') }} {{ syncResult.existing_count }}</span>
-                  <span>{{ $t('uiDomains.syncSkipped') }} {{ syncResult.skipped_count }}</span>
-                  <span>{{ $t('uiDomains.syncErrors') }} {{ syncResult.error_count }}</span>
-                </p>
-              </div>
-            </div>
-
-            <div v-if="syncResult.details && syncResult.details.length > 0" class="y-inset max-h-60 overflow-y-auto px-4 py-3">
-              <p class="y-label mb-2">{{ $t('uiDomains.syncDetails') }}</p>
-              <ul class="space-y-1 font-mono text-xs text-y-muted">
-                <li v-for="(detail, index) in syncResult.details" :key="index">{{ detail }}</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-
-        <div class="modal-action">
-          <button type="button" class="btn btn-ghost" :disabled="syncInProgress" @click="closeSyncModal">{{ $t('common.cancel') }}</button>
-          <button
-            type="button"
-            class="btn btn-primary"
-            :disabled="syncInProgress || (!syncForm.fossbilling_url && !siteConfig.fossbilling?.url) || !syncForm.fossbilling_api_key"
-            @click="syncFromFOSSBilling"
-          >
-            <span v-if="syncInProgress" class="loading loading-spinner loading-sm"></span>
-            <span v-else>{{ $t('uiDomains.syncAction') }}</span>
-          </button>
-        </div>
-      </div>
-      <form method="dialog" class="modal-backdrop">
-        <button type="button" :disabled="syncInProgress" @click="closeSyncModal">close</button>
-      </form>
-    </dialog>
-
     <!-- Health Details Modal -->
     <dialog :class="{ 'modal': true, 'modal-open': showHealthDetailsModal }">
       <div class="modal-box max-w-2xl" v-if="selectedDomain && selectedDomain.scan_summary">
@@ -866,9 +777,6 @@ if (!siteConfig.loaded) {
   siteConfig.fetch()
 }
 
-// FOSSBilling 是否启用
-const fossbillingEnabled = computed(() => siteConfig.fossbilling?.enabled || false)
-
 const domains = ref([])
 const loading = ref(true)
 const submitting = ref(false)
@@ -877,7 +785,6 @@ const submitting = ref(false)
 const showNSModal = ref(false)
 const showRenewModal = ref(false)
 const showTransferModal = ref(false)
-const showSyncModal = ref(false)
 const showScanDetailsModal = ref(false)
 const showHealthDetailsModal = ref(false)
 const showDeleteModal = ref(false)
@@ -909,14 +816,6 @@ const renewPriceData = ref(null)
 
 // Transfer
 const transferTarget = ref('')
-
-// FOSSBilling Sync
-const syncInProgress = ref(false)
-const syncForm = ref({
-  fossbilling_url: '',
-  fossbilling_api_key: ''
-})
-const syncResult = ref(null)
 
 // Scan Details
 const scanRecords = ref([])
@@ -1389,70 +1288,6 @@ const executeDelete = async () => {
   } finally {
     deleting.value = false
   }
-}
-
-// FOSSBilling Sync
-const openSyncModal = () => {
-  // 使用配置中的默认 URL（如果有）
-  syncForm.value = {
-    fossbilling_url: siteConfig.fossbilling?.url || '',
-    fossbilling_api_key: ''
-  }
-  syncResult.value = null
-  showSyncModal.value = true
-}
-
-const syncFromFOSSBilling = async () => {
-  // 验证必填字段
-  if (!syncForm.value.fossbilling_url && !siteConfig.fossbilling?.url) {
-    toast.warning('Please enter FOSSBilling server URL')
-    return
-  }
-
-  if (!syncForm.value.fossbilling_api_key) {
-    toast.warning('Please enter FOSSBilling API Key')
-    return
-  }
-
-  syncInProgress.value = true
-  syncResult.value = null
-
-  try {
-    const response = await axios.post('/api/user/sync-from-fossbilling', syncForm.value)
-    syncResult.value = response.data
-
-    if (response.data.synced_count > 0) {
-      toast.success(`Successfully synced ${response.data.synced_count} domain(s)`)
-      // Refresh domain list after sync
-      await fetchDomains()
-    } else {
-      toast.info('No new domains to sync')
-    }
-  } catch (error) {
-    toast.error(error.response?.data?.error || 'Failed to sync from FOSSBilling')
-    syncResult.value = {
-      message: 'Sync failed',
-      error_count: 1,
-      synced_count: 0,
-      existing_count: 0,
-      skipped_count: 0,
-      details: [error.response?.data?.error || 'An error occurred during sync']
-    }
-  } finally {
-    syncInProgress.value = false
-  }
-}
-
-const closeSyncModal = () => {
-  if (syncInProgress.value) {
-    return
-  }
-  showSyncModal.value = false
-  syncForm.value = {
-    fossbilling_url: '',
-    fossbilling_api_key: ''
-  }
-  syncResult.value = null
 }
 
 // Health Details

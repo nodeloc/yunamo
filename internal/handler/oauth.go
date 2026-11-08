@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -61,6 +62,20 @@ func (h *OAuthHandler) getBackendURL() string {
 		baseURL = baseURL[:len(baseURL)-1]
 	}
 	return baseURL
+}
+
+// errOAuthEmailUnverified 表示 OAuth 邮箱对应的本地账号尚未验证邮箱，拒绝自动关联。
+var errOAuthEmailUnverified = errors.New("email_unverified")
+
+// oauthUserErrorRedirect 把 findOrCreateOAuthUser 的错误转成登录页错误码，不向前端暴露内部错误。
+func (h *OAuthHandler) oauthUserErrorRedirect(c *gin.Context, err error) {
+	code := "create_user_failed"
+	if errors.Is(err, errOAuthEmailUnverified) {
+		code = "email_unverified"
+	} else {
+		fmt.Printf("OAuth find/create user error: %v\n", err)
+	}
+	c.Redirect(http.StatusFound, fmt.Sprintf("%s/login?error=%s", h.cfg.FrontendURL, code))
 }
 
 func generateState() string {
@@ -135,8 +150,7 @@ func (h *OAuthHandler) GithubCallback(c *gin.Context) {
 	defaultQuota := GetQuotaForLevel(h.db, defaultLevel)
 	user, err := h.findOrCreateOAuthUser("github", fmt.Sprintf("%d", githubUser.ID), email, githubUser.Login, githubUser.AvatarURL, c.ClientIP(), defaultLevel, defaultQuota)
 	if err != nil {
-		fmt.Printf("OAuth find/create user error: %v\n", err)
-		c.Redirect(http.StatusFound, fmt.Sprintf("%s/login?error=%s", h.cfg.FrontendURL, url.QueryEscape("create_user_failed: "+err.Error())))
+		h.oauthUserErrorRedirect(c, err)
 		return
 	}
 
@@ -199,7 +213,7 @@ func (h *OAuthHandler) GoogleCallback(c *gin.Context) {
 		return
 	}
 
-	if googleUser.Email == "" {
+	if googleUser.Email == "" || !googleUser.EmailVerified {
 		c.Redirect(http.StatusFound, fmt.Sprintf("%s/login?error=no_email", h.cfg.FrontendURL))
 		return
 	}
@@ -212,8 +226,7 @@ func (h *OAuthHandler) GoogleCallback(c *gin.Context) {
 	defaultQuota := GetQuotaForLevel(h.db, defaultLevel)
 	user, err := h.findOrCreateOAuthUser("google", googleUser.Sub, googleUser.Email, username, googleUser.Picture, c.ClientIP(), defaultLevel, defaultQuota)
 	if err != nil {
-		fmt.Printf("OAuth find/create user error: %v\n", err)
-		c.Redirect(http.StatusFound, fmt.Sprintf("%s/login?error=create_user_failed", h.cfg.FrontendURL))
+		h.oauthUserErrorRedirect(c, err)
 		return
 	}
 
@@ -262,6 +275,11 @@ func (h *OAuthHandler) findOrCreateOAuthUser(provider, oauthID, email, username,
 	// 2. 按邮箱查找已有用户
 	err = h.db.Where("email = ?", email).First(&user).Error
 	if err == nil {
+		// 只关联邮箱已验证的本地账号：否则攻击者可以先用受害者邮箱注册
+		// （无需验证），等受害者用 OAuth 登录时被并入攻击者掌握密码的账号。
+		if !user.EmailVerified {
+			return nil, errOAuthEmailUnverified
+		}
 		// 邮箱已存在，关联 OAuth
 		updates := map[string]interface{}{
 			"provider":      provider,
@@ -385,10 +403,11 @@ func (h *OAuthHandler) fetchGithubEmail(accessToken string) (string, error) {
 
 // Google API types
 type googleUser struct {
-	Sub     string `json:"sub"`
-	Email   string `json:"email"`
-	Name    string `json:"name"`
-	Picture string `json:"picture"`
+	Sub           string `json:"sub"`
+	Email         string `json:"email"`
+	EmailVerified bool   `json:"email_verified"`
+	Name          string `json:"name"`
+	Picture       string `json:"picture"`
 }
 
 func (h *OAuthHandler) fetchGoogleUser(accessToken string) (*googleUser, error) {
@@ -485,8 +504,7 @@ func (h *OAuthHandler) NodelocCallback(c *gin.Context) {
 
 	user, err := h.findOrCreateOAuthUser("nodeloc", nodelocUser.Sub, nodelocUser.Email, username, nodelocUser.Picture, c.ClientIP(), userLevel, quota)
 	if err != nil {
-		fmt.Printf("OAuth find/create user error: %v\n", err)
-		c.Redirect(http.StatusFound, fmt.Sprintf("%s/login?error=%s", h.cfg.FrontendURL, url.QueryEscape("create_user_failed: "+err.Error())))
+		h.oauthUserErrorRedirect(c, err)
 		return
 	}
 

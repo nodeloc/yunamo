@@ -286,8 +286,9 @@ func (h *UserHandler) ResetPassword(c *gin.Context) {
 			return errInvalidEmailToken
 		}
 		if err := tx.Model(&models.User{}).Where("id = ?", user.ID).Updates(map[string]interface{}{
-			"password_hash":  string(hashedPassword),
-			"email_verified": true,
+			"password_hash":       string(hashedPassword),
+			"password_changed_at": now,
+			"email_verified":      true,
 		}).Error; err != nil {
 			return err
 		}

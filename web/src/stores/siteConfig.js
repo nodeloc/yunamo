@@ -8,10 +8,6 @@ export const useSiteConfigStore = defineStore('siteConfig', {
     oauth: {},
     allowPasswordRegister: true,
     currencySymbol: 'NL',
-    fossbilling: {
-      enabled: false,
-      url: '',
-    },
     loaded: false,
   }),
 
@@ -24,10 +20,6 @@ export const useSiteConfigStore = defineStore('siteConfig', {
         this.oauth = res.data.oauth || {}
         this.allowPasswordRegister = res.data.allow_password_register !== false
         this.currencySymbol = res.data.currency_symbol || 'NL'
-        this.fossbilling = res.data.fossbilling || {
-          enabled: false,
-          url: '',
-        }
         this.loaded = true
       } catch (err) {
         console.error('Failed to fetch site config:', err)

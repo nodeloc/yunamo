@@ -57,6 +57,8 @@
 </template>
 
 <script setup>
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Megaphone, Wrench, Sparkles, TriangleAlert, Star, ArrowRight } from 'lucide-vue-next'
@@ -118,10 +120,8 @@ const formatDate = (dateString) => {
 }
 
 const formatContent = (content) => {
-  // Basic markdown-like formatting
-  return content
-    .replace(/\n/g, '<br>')
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+  if (!content) return ''
+  // 与详情页一致：Markdown 渲染后再经 DOMPurify 清洗，防止公告内容注入脚本
+  return DOMPurify.sanitize(marked.parse(content))
 }
 </script>
