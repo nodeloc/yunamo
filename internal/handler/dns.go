@@ -2,6 +2,7 @@ package handler
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -514,14 +515,24 @@ func validateDNSRecord(recordType, content string) error {
 			return fmt.Errorf("invalid domain name")
 		}
 	case "NS":
-		// 域名验证
 		if content == "" {
 			return fmt.Errorf("content cannot be empty")
 		}
+		// NS 目标是主机名，不能带下划线
+		if !isValidHostnameTarget(content) {
+			return fmt.Errorf("invalid domain name")
+		}
 	case "MX":
-		// MX 记录验证
 		if content == "" {
 			return fmt.Errorf("content cannot be empty")
+		}
+		// RFC 7505 null MX：单个 "." 表示该域名不接收邮件
+		if content == "." {
+			return nil
+		}
+		// MX 目标是主机名，不能带下划线
+		if !isValidHostnameTarget(content) {
+			return fmt.Errorf("invalid mail exchanger hostname")
 		}
 	case "TXT":
 		// TXT 记录可以是任何文本
@@ -549,24 +560,28 @@ func luaCNAMEEntry(content string) (powerdns.RecordEntry, error) {
 	return powerdns.RecordEntry{Content: fmt.Sprintf("CNAME \";return '%s.'\"", target)}, nil
 }
 
+// isValidIPv4 校验 IPv4 字面量。值按原样使用：前后空白属于校验错误，
+// 不能再 TrimSpace，否则带空白的地址会写进 PowerDNS。
+// 含冒号的值（::ffff:192.0.2.1 这类 IPv4-mapped IPv6）一并拒绝，PowerDNS 会 422。
 func isValidIPv4(ip string) bool {
-	// 简单的 IPv4 验证
-	parts := strings.Split(ip, ".")
-	if len(parts) != 4 {
+	if strings.Contains(ip, ":") {
 		return false
 	}
-	for _, part := range parts {
-		num, err := strconv.Atoi(part)
-		if err != nil || num < 0 || num > 255 {
-			return false
-		}
-	}
-	return true
+	parsed := net.ParseIP(ip)
+	return parsed != nil && parsed.To4() != nil
 }
 
+// isValidIPv6 校验 IPv6 字面量（同样不 TrimSpace）。
 func isValidIPv6(ip string) bool {
-	// 简单的 IPv6 验证
-	return strings.Contains(ip, ":")
+	parsed := net.ParseIP(ip)
+	return parsed != nil && parsed.To4() == nil
+}
+
+// isValidHostnameTarget 校验 NS/MX 目标：必须是合法主机名（不含下划线），
+// 允许末尾带点的绝对域名。
+func isValidHostnameTarget(target string) bool {
+	target = strings.ToLower(strings.TrimSuffix(target, "."))
+	return len(target) <= 253 && nameserverHostnameRe.MatchString(target)
 }
 
 // buildRecordFQDN 构建 PowerDNS 所需的完整记录名
@@ -609,7 +624,7 @@ func (h *DNSHandler) syncRecordSetToPowerDNS(record *models.DNSRecord, domain *m
 				for i := range allRecords {
 					allRecords[i].SyncError = &syncErr
 					allRecords[i].SyncedToPowerDNS = false
-					h.db.Save(&allRecords[i])
+					h.saveRecordSyncState(&allRecords[i])
 				}
 				h.updateDomainSyncStatus(record.DomainID)
 				return
@@ -642,7 +657,7 @@ func (h *DNSHandler) syncRecordSetToPowerDNS(record *models.DNSRecord, domain *m
 					for i := range allRecords {
 						allRecords[i].SyncError = &syncErr
 						allRecords[i].SyncedToPowerDNS = false
-						h.db.Save(&allRecords[i])
+						h.saveRecordSyncState(&allRecords[i])
 					}
 					h.updateDomainSyncStatus(record.DomainID)
 					return
@@ -661,7 +676,7 @@ func (h *DNSHandler) syncRecordSetToPowerDNS(record *models.DNSRecord, domain *m
 			for i := range allRecords {
 				allRecords[i].SyncError = &syncErr
 				allRecords[i].SyncedToPowerDNS = false
-				h.db.Save(&allRecords[i])
+				h.saveRecordSyncState(&allRecords[i])
 			}
 		} else {
 			now := timeutil.Now()
@@ -669,7 +684,7 @@ func (h *DNSHandler) syncRecordSetToPowerDNS(record *models.DNSRecord, domain *m
 				allRecords[i].SyncError = nil
 				allRecords[i].SyncedToPowerDNS = true
 				allRecords[i].LastSyncedAt = &now
-				h.db.Save(&allRecords[i])
+				h.saveRecordSyncState(&allRecords[i])
 			}
 		}
 	} else {
@@ -678,11 +693,22 @@ func (h *DNSHandler) syncRecordSetToPowerDNS(record *models.DNSRecord, domain *m
 			allRecords[i].SyncError = nil
 			allRecords[i].SyncedToPowerDNS = true
 			allRecords[i].LastSyncedAt = &now
-			h.db.Save(&allRecords[i])
+			h.saveRecordSyncState(&allRecords[i])
 		}
 	}
 
 	h.updateDomainSyncStatus(record.DomainID)
+}
+
+// saveRecordSyncState 只写回同步状态列。后台同步用的是 SetRecords 之前读到的
+// 快照，整行 Save 会把用户在这期间修改的 ttl / content / is_active 覆盖回旧值。
+func (h *DNSHandler) saveRecordSyncState(record *models.DNSRecord) {
+	h.db.Model(&models.DNSRecord{}).Where("id = ?", record.ID).
+		Updates(map[string]interface{}{
+			"sync_error":         record.SyncError,
+			"synced_to_powerdns": record.SyncedToPowerDNS,
+			"last_synced_at":     record.LastSyncedAt,
+		})
 }
 
 // updateDomainSyncStatus 更新域名的 DNS 同步状态
